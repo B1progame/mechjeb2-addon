@@ -46,6 +46,7 @@ namespace MuMech
         public MechJebModuleSolarPanelController Solarpanel;
         public MechJebModuleDeployableAntennaController AntennaControl;
         public MechJebModuleLandingAutopilot Landing;
+        public MechJebModuleAdvancedLandingAutopilot AdvancedLanding;
         public MechJebModuleSettings Settings;
         public MechJebModuleStageStats StageStats;
         public MechJebModuleAscentSettings AscentSettings;
@@ -768,6 +769,7 @@ namespace MuMech
             Solarpanel = GetComputerModule<MechJebModuleSolarPanelController>();
             AntennaControl = GetComputerModule<MechJebModuleDeployableAntennaController>();
             Landing = GetComputerModule<MechJebModuleLandingAutopilot>();
+            AdvancedLanding = GetComputerModule<MechJebModuleAdvancedLandingAutopilot>();
             Settings = GetComputerModule<MechJebModuleSettings>();
             Guidance = GetComputerModule<MechJebModuleGuidanceController>();
             Glueball = GetComputerModule<MechJebModulePSGGlueBall>();

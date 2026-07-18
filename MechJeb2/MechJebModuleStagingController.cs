@@ -54,6 +54,21 @@ namespace MuMech
         [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDoubleMult DropSolidsTwrPct = new EditableDoubleMult(0.50, 0.01);
 
+        [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
+        public bool ReserveFuelForBoosterRecovery;
+
+        [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
+        public bool BlockUnsafeBoosterSeparation;
+
+        [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableInt BoosterRecoveryStage = 0;
+
+        [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble BoosterRecoveryDeltaV = 800;
+
+        [Persistent(pass = (int)(Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble BoosterRecoveryMinimumTwr = 1.2;
+
         public bool AutostagingOnce;
 
         private bool _waitingForFirstStaging;
@@ -225,6 +240,29 @@ namespace MuMech
             GuiUtils.SimpleTextBox("", DropSolidsTwrPct, "% rocket accel", 35);
             GUILayout.EndHorizontal();
 
+            GUILayout.BeginVertical(GUI.skin.box);
+            ReserveFuelForBoosterRecovery =
+                GUILayout.Toggle(ReserveFuelForBoosterRecovery, "Reserve fuel for Advanced Landing");
+            if (ReserveFuelForBoosterRecovery)
+            {
+                GuiUtils.SimpleTextBox("Recovery stage (0 = any):", BoosterRecoveryStage, "", 40);
+                GuiUtils.SimpleTextBox("Separate with landing Δv:", BoosterRecoveryDeltaV, "m/s", 55);
+                GuiUtils.SimpleTextBox("Minimum landing TWR:", BoosterRecoveryMinimumTwr, "", 55);
+                BlockUnsafeBoosterSeparation =
+                    GUILayout.Toggle(BlockUnsafeBoosterSeparation, "Block separation when recovery is not viable");
+
+                if (Core.AdvancedLanding != null)
+                {
+                    AdvancedLanding.AdvancedLandingTelemetry telemetry = Core.AdvancedLanding.Telemetry;
+                    GUILayout.Label($"Recovery check: {telemetry.AvailableDeltaV:F0}m/s, TWR {telemetry.Twr:F2}, " +
+                                    $"{telemetry.Probability:F0}% estimated landing probability");
+                    if (Core.AdvancedLanding.RecoveryPlan != null)
+                        GUILayout.Label(Core.AdvancedLanding.RecoveryPlan.Status);
+                }
+            }
+
+            GUILayout.EndVertical();
+
             GUILayout.EndVertical();
         }
 
@@ -257,6 +295,7 @@ namespace MuMech
         private double _stageCountdownStart;
         private Vessel _currentActiveVessel;
         private bool _initializedOnce;
+        private double _lastRecoveryAnalysis;
 
         public override void OnFixedUpdate()
         {
@@ -298,6 +337,8 @@ namespace MuMech
             UpdateActiveModuleEngines(_allModuleEngines);
             UpdateBurnedResources();
             _shouldDropSolids = null; // invalidate the cache; _droppingSolids recomputes lazily if needed this update
+
+            if (CheckBoosterRecoveryReserve()) return;
 
             // don't decouple active or idle engines or tanks
             if (InverseStageDecouplesActiveOrIdleEngineOrTank(Vessel.currentStage - 1, _burnedResources, _activeModuleEngines) &&
@@ -439,6 +480,37 @@ namespace MuMech
             {
                 ImmediateStage();
             }
+        }
+
+        private bool CheckBoosterRecoveryReserve()
+        {
+            if (!ReserveFuelForBoosterRecovery || Core.AdvancedLanding == null) return false;
+            if (BoosterRecoveryStage > 0 && Vessel.currentStage != BoosterRecoveryStage) return false;
+            if (VesselState.Time - _lastRecoveryAnalysis < 0.5) return false;
+
+            _lastRecoveryAnalysis = VesselState.Time;
+            Core.AdvancedLanding.BoosterRecoveryMode = true;
+            Core.AdvancedLanding.UpdateFeasibility();
+
+            AdvancedLanding.AdvancedLandingTelemetry telemetry = Core.AdvancedLanding.Telemetry;
+            bool twrReady = telemetry.Twr >= BoosterRecoveryMinimumTwr;
+            bool reserveReached = telemetry.AvailableDeltaV <= BoosterRecoveryDeltaV * 1.05;
+            bool hasReserve = telemetry.AvailableDeltaV >= BoosterRecoveryDeltaV * 0.85;
+
+            if (reserveReached && twrReady && hasReserve)
+            {
+                Core.AdvancedLanding.ArmRecoveryPlan(Vessel.currentStage - 1);
+                Stage();
+                return true;
+            }
+
+            if (reserveReached && BlockUnsafeBoosterSeparation && (!twrReady || !hasReserve))
+            {
+                Core.AdvancedLanding.ArmRecoveryPlan(Vessel.currentStage - 1);
+                return true;
+            }
+
+            return false;
         }
 
         //determine whether it's safe to activate inverseStage

@@ -6,6 +6,7 @@ namespace MechJebLib.Control
     {
         public double MinOnTime;
         public double MinOffTime;
+        public bool PulseAtMinimum;
 
         private double _accumulator; // impulse debt in m/s (positive = owed)
         private bool _outputOn;
@@ -37,8 +38,8 @@ namespace MechJebLib.Control
         ///     minThrustAccel and maxThrustAccel.
         ///     Above minThrustAccel, returns the continuous throttle directly.
         ///     Below minThrustAccel, delta-sigma modulates between full-off (0)
-        ///     and full-on (1) so the time-integrated acceleration tracks the
-        ///     commanded profile.
+        ///     and either full-on or minimum stable throttle, depending on
+        ///     PulseAtMinimum, so time-integrated acceleration tracks the command.
         /// </summary>
         public float ThrottleCommand(double commandedAccel,
             double minThrustAccel,
@@ -71,12 +72,13 @@ namespace MechJebLib.Control
 
             // PWM regime: pulse between 0 (engine off) and 1 (engine at
             // maxThrustAccel). The integrator carries impulse debt in m/s.
-            double delivered = _outputOn ? maxThrustAccel : 0.0;
+            double pulseAcceleration = PulseAtMinimum ? minThrustAccel : maxThrustAccel;
+            double delivered = _outputOn ? pulseAcceleration : 0.0;
             _accumulator += (commandedAccel - delivered) * dt;
             _stateTimer += dt;
 
             // Anti-windup: bound to one max-dwell of impulse debt.
-            double clamp = maxThrustAccel * Max(MinOnTime, MinOffTime);
+            double clamp = pulseAcceleration * Max(MinOnTime, MinOffTime);
             if (_accumulator > clamp) _accumulator = clamp;
             if (_accumulator < -clamp) _accumulator = -clamp;
 
@@ -97,7 +99,7 @@ namespace MechJebLib.Control
                 }
             }
 
-            return _outputOn ? 1.0f : 0.0f;
+            return _outputOn ? (PulseAtMinimum ? (float)ENGINE_ON_EPSILON : 1.0f) : 0.0f;
         }
     }
 }
