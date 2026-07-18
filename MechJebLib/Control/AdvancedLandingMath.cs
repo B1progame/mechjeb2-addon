@@ -70,6 +70,22 @@ namespace MechJebLib.Control
             return Max(0, g + (desiredVerticalSpeed - predictedVerticalSpeed) / timeConstant);
         }
 
+        public static double LimitEarlyAscentAcceleration(double commandedAcceleration, double altitude,
+            double verticalSpeed, double hoverCaptureAltitude, double touchdownSpeed, double gravity)
+        {
+            double command = Max(0, commandedAcceleration);
+            if (altitude <= Max(0, hoverCaptureAltitude)) return command;
+
+            // Above the terminal hover-capture zone the vehicle must keep descending.
+            // Cut thrust if it is already rising, and remain slightly below hover thrust
+            // once descent has nearly stopped. Fast descents retain full braking authority.
+            if (verticalSpeed >= 0) return 0;
+            double settledDescentSpeed = Max(0.5, Abs(touchdownSpeed));
+            if (verticalSpeed > -settledDescentSpeed)
+                return Min(command, 0.85 * Max(0, gravity));
+            return command;
+        }
+
         public static double TargetCaptureTime(double missDistance, double horizontalSpeed, double lateralAcceleration)
         {
             if (missDistance <= 0) return 0;

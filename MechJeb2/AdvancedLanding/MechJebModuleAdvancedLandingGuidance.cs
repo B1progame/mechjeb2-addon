@@ -157,6 +157,7 @@ namespace MuMech
             GuiUtils.SimpleTextBox("Heat safety:", autopilot.MaxHeatRatio, "%", 55);
             GuiUtils.SimpleTextBox("Touchdown speed:", autopilot.TouchdownSpeed, "m/s", 55);
             GuiUtils.SimpleTextBox("Final descent limit:", autopilot.FinalDescentSpeedLimit, "m/s", 55);
+            GuiUtils.SimpleTextBox("Allow hover/climb below:", autopilot.HoverCaptureAltitude, "m", 55);
             GuiUtils.SimpleTextBox("Minimum throttle pulse:", autopilot.ThrottlePulseWidth, "s", 55);
             GuiUtils.SimpleTextBox("Landing burn lead:", autopilot.LandingBurnLead, "s", 55);
 

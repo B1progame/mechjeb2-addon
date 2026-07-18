@@ -47,6 +47,9 @@ namespace MuMech
         public readonly EditableDouble FinalDescentSpeedLimit = 12;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble HoverCaptureAltitude = 15;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDouble ThrottlePulseWidth = 0.12;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -651,6 +654,22 @@ namespace MuMech
             double maxTilt = VesselState.AltitudeASL < 10000 ? 25 : 60;
             CommandAttitude(attitude, ForceEngineFirstAttitude ? maxTilt : 180);
 
+            if (UseRCS && Telemetry.PredictionReady)
+            {
+                Vector3d predictedImpactError = Vector3d.Exclude(
+                    VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
+                double correctionTime = IsFinite(Telemetry.TimeToImpact) && Telemetry.TimeToImpact > 0
+                    ? Max(5, Telemetry.TimeToImpact)
+                    : 10;
+                Vector3d correctionDeltaV = 1.25 * predictedImpactError / correctionTime;
+                const double maximumRcsCorrection = 8;
+                if (correctionDeltaV.magnitude > maximumRcsCorrection)
+                    correctionDeltaV = correctionDeltaV.normalized * maximumRcsCorrection;
+                Core.RCS.Users.Add(this);
+                Core.RCS.SetWorldVelocityError(correctionDeltaV);
+                Telemetry.DesiredHorizontalSpeed = correctionDeltaV.magnitude;
+            }
+
             bool deploy = AirbrakeMode == AdvancedLandingAirbrakeMode.Deployed ||
                           AirbrakeMode == AdvancedLandingAirbrakeMode.Automatic &&
                           (Telemetry.TargetError > TargetRadius || VesselState.DynamicPressure > 3000);
@@ -708,10 +727,10 @@ namespace MuMech
                 VesselState.GravityForce.magnitude, VesselState.MaxEngineResponseTime, speedLimit);
             double minAcceleration = VesselState.MinThrustAcceleration;
             double maxAcceleration = VesselState.LimitedMaxThrustAcceleration;
-            if (!final && VesselState.SurfaceVelocity.magnitude > 30)
-                commandedAcceleration = Max(commandedAcceleration,
-                    minAcceleration + 0.65 * Max(0, maxAcceleration - minAcceleration));
             commandedAcceleration /= Max(Vector3d.Dot(desiredThrust, VesselState.Up), 0.5);
+            commandedAcceleration = AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                commandedAcceleration, altitude, VesselState.SpeedVertical,
+                HoverCaptureAltitude, TouchdownSpeed, VesselState.GravityForce.magnitude);
             if (attitudeError > 30)
                 commandedAcceleration = Min(commandedAcceleration, maxAcceleration * (final ? 0.35 : 0.20));
 

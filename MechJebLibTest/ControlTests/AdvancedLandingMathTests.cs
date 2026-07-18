@@ -59,6 +59,24 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void EarlyAscentGovernorCutsClimbAboveHoverZone()
+        {
+            Assert.Equal(0, AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                20, 100, 1, 15, 0.5, 9.81));
+            Assert.InRange(AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                20, 100, -0.1, 15, 0.5, 9.81), 8.3, 8.4);
+        }
+
+        [Fact]
+        public void HoverZoneRetainsVerticalAuthority()
+        {
+            Assert.Equal(20, AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                20, 10, 1, 15, 0.5, 9.81), 8);
+            Assert.Equal(20, AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                20, 100, -20, 15, 0.5, 9.81), 8);
+        }
+
+        [Fact]
         public void ProbabilityRequiresPredictionAndRelight()
         {
             Assert.Equal(0, AdvancedLandingMath.LandingProbability(1000, 500, 2, 0, 50, 0.2, 1, 6, false, true));

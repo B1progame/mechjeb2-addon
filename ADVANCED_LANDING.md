@@ -55,6 +55,8 @@ The window distinguishes **Predicted miss** (where the current simulated traject
 
 The selected precision radius is an acceptance radius, not the controller's aiming point. Powered and final guidance use a much smaller center deadband (10% of the selected radius during final descent, capped at 1 m), combine current position/velocity feedback with predicted-impact feed-forward, and increase terminal lateral response as altitude falls. This avoids merely touching the outside edge of a large radius and reduces predictor lag.
 
+During atmospheric descent, predicted-impact error is also converted into a bounded RCS correction while the attitude controller uses pitch/yaw control surfaces and fins. The landing engine no longer has a forced 65% throttle floor merely because total surface speed is high; that floor could turn a lateral divert into an unwanted climb. Above the configurable **Allow hover/climb below** altitude, an ascent governor cuts thrust if the vehicle starts rising and keeps near-stationary flight slightly below hover thrust. Full braking remains available during a fast descent, and hover/climb authority is restored inside the terminal capture zone.
+
 ## Booster recovery staging
 
 MechJeb's Autostaging Settings now include **Reserve fuel for Advanced Landing**. A configured recovery stage can separate early when its remaining atmospheric delta-v reaches the landing reserve and the live landing TWR is acceptable. The resulting `BoosterRecoveryPlan` records the source vessel, separation stage, target, reserve, requirement, and viability for later vessel/FMRS handoff.
