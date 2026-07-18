@@ -165,6 +165,14 @@ namespace MechJebLib.Control
             return gameSeconds / Max(1, warpRate);
         }
 
+        public static double EntryPhysicsWarpRate(double secondsUntilWarpTarget, double entryWarpLead,
+            double maximumPhysicsWarpRate)
+        {
+            double lead = Max(2, entryWarpLead);
+            double remaining = Max(1, secondsUntilWarpTarget);
+            return Min(Max(1, maximumPhysicsWarpRate), Max(1, remaining / lead));
+        }
+
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,
             double targetRadius, double heatRatio, double gLoad, double maxG, bool engineRelightAvailable, bool predictionReady)
         {

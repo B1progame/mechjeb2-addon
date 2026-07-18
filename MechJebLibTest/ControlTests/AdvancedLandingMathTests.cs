@@ -145,6 +145,20 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void EntryPhysicsWarpCanAdvanceBeyondTwoWhenTimeAllows()
+        {
+            Assert.Equal(4, AdvancedLandingMath.EntryPhysicsWarpRate(120, 12, 4), 8);
+            Assert.Equal(3, AdvancedLandingMath.EntryPhysicsWarpRate(36, 12, 4), 8);
+        }
+
+        [Fact]
+        public void EntryPhysicsWarpSlowsNearAtmosphereAndHonorsLimit()
+        {
+            Assert.Equal(1, AdvancedLandingMath.EntryPhysicsWarpRate(8, 12, 4), 8);
+            Assert.Equal(2, AdvancedLandingMath.EntryPhysicsWarpRate(120, 12, 2), 8);
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);

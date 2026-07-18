@@ -533,8 +533,8 @@ namespace MuMech
                 else
                 {
                     double remaining = Max(1, targetUT - VesselState.Time);
-                    float requestedRate = (float)Min(
-                        Max(1, MaxPhysicsWarpRate), Max(1, remaining / Max(2, EntryWarpLead)));
+                    float requestedRate = (float)AdvancedLandingMath.EntryPhysicsWarpRate(
+                        remaining, EntryWarpLead, MaxPhysicsWarpRate);
                     Core.Warp.WarpPhysicsAtRate(requestedRate);
                 }
                 _autoWarpActive = true;
@@ -586,7 +586,11 @@ namespace MuMech
 
         private void StopAutoWarp()
         {
-            if (_autoWarpActive && !MuUtils.PhysicsRunning()) Core.Warp.MinimumWarp();
+            // MinimumWarp works for both HIGH (on-rails) and LOW (physics) warp.
+            // PhysicsRunning() is true during physics warp, so guarding this call with
+            // !PhysicsRunning() would leave a descending vessel at 2x-4x after guidance
+            // asks auto-warp to stop.
+            if (_autoWarpActive) Core.Warp.MinimumWarp();
             _autoWarpActive = false;
             Telemetry.AutoWarpActive = false;
         }
