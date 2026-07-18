@@ -8,6 +8,7 @@ namespace MuMech.AdvancedLanding
         Preflight,
         OrbitalCoast,
         DeorbitBurn,
+        EntryCoast,
         Boostback,
         EntryBurn,
         AerodynamicGuidance,
@@ -63,6 +64,8 @@ namespace MuMech.AdvancedLanding
         public double Twr;
         public double Probability;
         public double EntryBurnCountdown = double.NaN;
+        public double AtmosphereEntryCountdown = double.NaN;
+        public double AtmosphereEntryRealSeconds = double.NaN;
         public double LandingBurnCountdown = double.NaN;
         public double DeorbitDeltaV;
         public double TimeToImpact = double.NaN;
@@ -100,6 +103,8 @@ namespace MuMech.AdvancedLanding
             Twr = 0;
             Probability = 0;
             EntryBurnCountdown = double.NaN;
+            AtmosphereEntryCountdown = double.NaN;
+            AtmosphereEntryRealSeconds = double.NaN;
             LandingBurnCountdown = double.NaN;
             DeorbitDeltaV = 0;
             TimeToImpact = double.NaN;

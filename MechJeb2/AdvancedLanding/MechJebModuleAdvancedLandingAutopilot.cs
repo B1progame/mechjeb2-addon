@@ -92,6 +92,12 @@ namespace MuMech
         public readonly EditableDouble MaxAutoWarpRate = 1000;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble EntryWarpLead = 12;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public bool IgnoreFuelLimits;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public bool DeployLandingGear = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -215,7 +221,9 @@ namespace MuMech
                 SeparationStage = separationStage,
                 TargetLatitude = Core.Target.targetLatitude,
                 TargetLongitude = Core.Target.targetLongitude,
-                ReservedDeltaV = Telemetry.AvailableDeltaV * Clamp(FuelReservePercent / 100.0, 0, 0.9),
+                ReservedDeltaV = IgnoreFuelLimits
+                    ? 0
+                    : Telemetry.AvailableDeltaV * Clamp(FuelReservePercent / 100.0, 0, 0.9),
                 EstimatedRequiredDeltaV = Telemetry.RequiredDeltaV,
                 Viable = Telemetry.Feasible,
                 Status = Telemetry.Feasible ? "Recovery reserve armed" : Telemetry.Warning
@@ -270,6 +278,10 @@ namespace MuMech
 
                 case AdvancedLandingPhase.DeorbitBurn:
                     DriveDeorbitBurn();
+                    break;
+
+                case AdvancedLandingPhase.EntryCoast:
+                    DriveEntryCoast();
                     break;
 
                 case AdvancedLandingPhase.Boostback:
@@ -331,14 +343,15 @@ namespace MuMech
                                   Telemetry.LandingBurnCountdown <= LandingBurnLead;
             double availableLateralAcceleration = Max(0.5, projectedThrustAcceleration *
                 Sin(Clamp(MaximumTargetingTilt, 0, 45) * PI / 180.0));
+            double captureDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
             double targetCaptureTime = AdvancedLandingMath.TargetCaptureTime(
-                Max(0, Telemetry.TargetError - TargetRadius), VesselState.SpeedSurfaceHorizontal,
+                Max(0, Telemetry.TargetError - captureDeadband), VesselState.SpeedSurfaceHorizontal,
                 availableLateralAcceleration) * SafetyFactor();
             bool targetCaptureNow = PoweredTargetCapture && Telemetry.PredictionReady &&
-                                    Telemetry.TargetError > TargetRadius &&
-                                    Telemetry.TimeToImpact > 0 &&
-                                    Telemetry.TimeToImpact <= targetCaptureTime + LandingBurnLead &&
-                                    Telemetry.FuelMarginDeltaV > 0;
+                                    Telemetry.TargetError > captureDeadband &&
+                                     Telemetry.TimeToImpact > 0 &&
+                                     Telemetry.TimeToImpact <= targetCaptureTime + LandingBurnLead &&
+                                     (IgnoreFuelLimits || Telemetry.FuelMarginDeltaV > 0);
 
             if (altitude < 150)
             {
@@ -371,6 +384,12 @@ namespace MuMech
                 return;
             }
 
+            if (ShouldCoastToAtmosphere())
+            {
+                SetPhase(AdvancedLandingPhase.EntryCoast);
+                return;
+            }
+
             SetPhase(AdvancedLandingPhase.Preflight);
         }
 
@@ -382,6 +401,12 @@ namespace MuMech
         private bool SafeForOrbitalWarp() =>
             AdvancedLandingMath.SafeForOrbitalWarp(
                 Orbit.PeA, VesselState.AltitudeASL, DeorbitPeriapsisThreshold(), 1000);
+
+        private bool ShouldCoastToAtmosphere() =>
+            MainBody.atmosphere && VesselState.AltitudeASL > MainBody.RealMaxAtmosphereAltitude() &&
+            Orbit.PeA < MainBody.RealMaxAtmosphereAltitude() &&
+            IsFinite(Telemetry.AtmosphereEntryCountdown) &&
+            Telemetry.AtmosphereEntryCountdown > Max(2, EntryWarpLead);
 
         private bool DeorbitWindowOpen()
         {
@@ -397,8 +422,8 @@ namespace MuMech
                 deorbitDeltaV, VesselState.GravityForce.magnitude,
                 VesselState.MaxEngineResponseTime, SafetyFactor());
             return Telemetry.EngineRelightAvailable && Telemetry.Twr > 1 &&
-                   AdvancedLandingMath.CanAffordManeuver(
-                       Telemetry.AvailableDeltaV, FuelReservePercent, required);
+                   (IgnoreFuelLimits || AdvancedLandingMath.CanAffordManeuver(
+                       Telemetry.AvailableDeltaV, FuelReservePercent, required));
         }
 
         private bool TryCalculateDeorbitSolution(out DeorbitSolution solution)
@@ -472,6 +497,31 @@ namespace MuMech
             SetAirbrakes(false);
         }
 
+        private void DriveEntryCoast()
+        {
+            Core.Thrust.RequestActiveThrottle(0);
+            Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
+                ? -VesselState.SurfaceVelocity.normalized
+                : VesselState.Up;
+            double attitudeError = CommandAttitude(retrograde, ForceEngineFirstAttitude ? 70 : 180);
+            SetAirbrakes(false);
+
+            if (AutoWarp && IsFinite(Telemetry.AtmosphereEntryCountdown) &&
+                Telemetry.AtmosphereEntryCountdown > Max(2, EntryWarpLead) &&
+                attitudeError < 10 && Vessel.angularVelocity.magnitude < 0.01)
+            {
+                double targetUT = VesselState.Time + Telemetry.AtmosphereEntryCountdown - Max(2, EntryWarpLead);
+                Core.Warp.WarpToUT(targetUT, Max(1, MaxAutoWarpRate));
+                _autoWarpActive = true;
+            }
+            else if (_autoWarpActive)
+            {
+                StopAutoWarp();
+            }
+
+            Telemetry.AutoWarpActive = _autoWarpActive;
+        }
+
         private void DriveDeorbitBurn()
         {
             StopAutoWarp();
@@ -504,6 +554,26 @@ namespace MuMech
             Telemetry.AutoWarpActive = false;
         }
 
+        private double AtmosphereEntryCountdown()
+        {
+            if (!MainBody.atmosphere) return double.NaN;
+            double atmosphereTop = MainBody.RealMaxAtmosphereAltitude();
+            if (VesselState.AltitudeASL <= atmosphereTop) return 0;
+            if (Orbit.PeA >= atmosphereTop) return double.NaN;
+
+            try
+            {
+                double entryUT = Orbit.NextTimeOfRadius(
+                    VesselState.Time, MainBody.Radius + atmosphereTop);
+                double countdown = entryUT - VesselState.Time;
+                return IsFinite(countdown) && countdown >= 0 ? countdown : double.NaN;
+            }
+            catch (Exception)
+            {
+                return double.NaN;
+            }
+        }
+
         private void DriveBoostback()
         {
             Vector3d target = TargetRelativePosition();
@@ -512,13 +582,14 @@ namespace MuMech
             Vector3d retrograde = -VesselState.SurfaceVelocity.normalized;
             Vector3d direction;
             double attitudeError;
+            double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
             if (ForceEngineFirstAttitude)
             {
                 // A full retrograde flip while the booster is still ascending leaves short,
                 // low-authority stages falling nose-first at apoapsis. In strict engine-first
                 // mode, perform the return correction by tilting toward the target while the
                 // engine end remains below the center of mass.
-                double tilt = Clamp((Telemetry.TargetError - TargetRadius) / 500, 0, 65) * PI / 180.0;
+                double tilt = Clamp((Telemetry.TargetError - aimDeadband) / 500, 0, 65) * PI / 180.0;
                 Vector3d horizontal = lateral.sqrMagnitude > 1e-8 ? lateral.normalized : VesselState.North;
                 direction = (Cos(tilt) * VesselState.Up + Sin(tilt) * horizontal).normalized;
                 attitudeError = CommandAttitude(direction, 65);
@@ -529,8 +600,9 @@ namespace MuMech
                 attitudeError = CommandAttitude(direction);
             }
 
-            double throttle = Clamp((Telemetry.TargetError - TargetRadius) / 25000, 0.05, 0.75);
-            if (Telemetry.FuelMarginDeltaV <= 0 || Telemetry.TargetError <= TargetRadius) throttle = 0;
+            double throttle = Clamp((Telemetry.TargetError - aimDeadband) / 25000, 0.05, 0.75);
+            if ((!IgnoreFuelLimits && Telemetry.FuelMarginDeltaV <= 0) ||
+                Telemetry.TargetError <= aimDeadband) throttle = 0;
             if (attitudeError > 20) throttle = 0;
             Core.Thrust.RequestActiveThrottle((float)throttle, allowZero: true);
             SetAirbrakes(false);
@@ -562,14 +634,17 @@ namespace MuMech
             {
                 Vector3d targetDelta = TargetRelativePosition() - Telemetry.PredictedImpact;
                 Vector3d lateral = Vector3d.Exclude(VesselState.Up, targetDelta).normalized;
-                double correctionAngle = Clamp((Telemetry.TargetError - TargetRadius) / 1000, 0, 20) * PI / 180.0;
+                double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
+                double correctionAngle = Clamp((Telemetry.TargetError - aimDeadband) / 750, 0, 25) * PI / 180.0;
                 corrected = (Cos(correctionAngle) * retrograde + Sin(correctionAngle) * lateral).normalized;
             }
 
             // Trajectories' marker follows its configured AoA and may be prograde. A powered
             // booster must keep its thrust axis on the retrograde hemisphere instead.
             if (ForceEngineFirstAttitude && Vector3d.Dot(corrected, retrograde) < 0) corrected = -corrected;
-            double correctionWeight = Clamp((Telemetry.TargetError - TargetRadius) / Max(TargetRadius * 20, 1000), 0.25, 0.70);
+            double correctionWeight = Clamp(
+                (Telemetry.TargetError - AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false)) /
+                Max(TargetRadius * 12, 600), 0.05, 0.80);
             Vector3d attitude = ForceEngineFirstAttitude
                 ? ((1 - correctionWeight) * retrograde + correctionWeight * corrected).normalized
                 : corrected.normalized;
@@ -588,23 +663,35 @@ namespace MuMech
             Vector3d targetDelta = TargetRelativePosition() - (VesselState.CoM - MainBody.position);
             Vector3d horizontalError = Vector3d.Exclude(VesselState.Up, targetDelta);
             Vector3d horizontalVelocity = Vector3d.Exclude(VesselState.Up, VesselState.SurfaceVelocity);
-            double range = horizontalError.magnitude;
             double fallbackTimeToGo = altitude / Max(5, -VesselState.SpeedVertical);
             double timeToGo = IsFinite(Telemetry.TimeToImpact) && Telemetry.TimeToImpact > 0
                 ? Clamp(Telemetry.TimeToImpact, 1, 30)
                 : Clamp(fallbackTimeToGo, 1, 30);
+            Vector3d effectiveHorizontalError = horizontalError;
+            if (Telemetry.PredictionReady && Telemetry.PredictedImpact.sqrMagnitude > 1)
+            {
+                Vector3d predictedImpactError = Vector3d.Exclude(
+                    VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
+                double predictionWeight = final
+                    ? Clamp(altitude / 300, 0.05, 0.50)
+                    : 0.80;
+                effectiveHorizontalError += predictionWeight * predictedImpactError;
+            }
+
+            double effectiveRange = effectiveHorizontalError.magnitude;
+            double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, final);
             double maximumHorizontalSpeed = final ? Min(5, Max(0.5, altitude / 15)) : Min(45, Max(8, altitude / 25));
             double desiredHorizontalSpeed = AdvancedLandingMath.DesiredHorizontalSpeed(
-                range, TargetRadius, timeToGo, maximumHorizontalSpeed);
-            Vector3d desiredHorizontalVelocity = range > 0.1
-                ? horizontalError.normalized * desiredHorizontalSpeed
+                effectiveRange, aimDeadband, timeToGo, maximumHorizontalSpeed);
+            Vector3d desiredHorizontalVelocity = effectiveRange > aimDeadband
+                ? effectiveHorizontalError.normalized * desiredHorizontalSpeed
                 : Vector3d.zero;
             Vector3d horizontalVelocityError = desiredHorizontalVelocity - horizontalVelocity;
-            double responseTime = final ? 0.8 : 1.8;
+            double responseTime = final ? 0.55 : 1.2;
             Vector3d desiredLateralAcceleration = horizontalVelocityError / responseTime;
             double tiltLimit = Clamp(MaximumTargetingTilt, 5, final ? 12 : 35);
             double thrustLimitedLateral = VesselState.LimitedMaxThrustAcceleration * Sin(tiltLimit * PI / 180.0);
-            double maxLateral = Min(final ? 3.0 : 10.0, Max(0.5, thrustLimitedLateral));
+            double maxLateral = Min(final ? 4.0 : 12.0, Max(0.5, thrustLimitedLateral));
             if (desiredLateralAcceleration.magnitude > maxLateral)
                 desiredLateralAcceleration = desiredLateralAcceleration.normalized * maxLateral;
 
@@ -814,7 +901,8 @@ namespace MuMech
             double reserve = Telemetry.AvailableDeltaV * Clamp(FuelReservePercent / 100.0, 0, 0.9);
             Telemetry.FuelMarginDeltaV = Telemetry.AvailableDeltaV - reserve - Telemetry.RequiredDeltaV;
             Telemetry.OrbitalReachable = deorbitSolutionReady && Telemetry.EngineRelightAvailable &&
-                                         Telemetry.Twr > 1 && Telemetry.FuelMarginDeltaV >= 0;
+                                         Telemetry.Twr > 1 &&
+                                         (IgnoreFuelLimits || Telemetry.FuelMarginDeltaV >= 0);
 
             if (IsFinite(Core.Hoverslam.IgnitionCountdown))
                 Telemetry.LandingBurnCountdown = Core.Hoverslam.IgnitionCountdown;
@@ -822,13 +910,20 @@ namespace MuMech
                 Telemetry.LandingBurnCountdown = EstimateLandingBurnCountdown();
 
             Telemetry.EntryBurnCountdown = EstimateEntryBurnCountdown();
-            Telemetry.Probability = AdvancedLandingMath.LandingProbability(Telemetry.AvailableDeltaV - reserve,
+            Telemetry.AtmosphereEntryCountdown = AtmosphereEntryCountdown();
+            Telemetry.AtmosphereEntryRealSeconds = AdvancedLandingMath.RealTimeCountdown(
+                Telemetry.AtmosphereEntryCountdown, TimeWarp.CurrentRate);
+            double probabilityDeltaV = IgnoreFuelLimits
+                ? Max(Telemetry.AvailableDeltaV - reserve, Telemetry.RequiredDeltaV * 1.5)
+                : Telemetry.AvailableDeltaV - reserve;
+            Telemetry.Probability = AdvancedLandingMath.LandingProbability(probabilityDeltaV,
                 Telemetry.RequiredDeltaV, Telemetry.Twr,
                 orbitalApproach ? 0 : Telemetry.TargetError, TargetRadius, Telemetry.HeatRatio,
                 Telemetry.GLoad, MaxGForce, Telemetry.EngineRelightAvailable,
                 Telemetry.PredictionReady || deorbitSolutionReady);
             bool commonSafety = Telemetry.EngineRelightAvailable && Telemetry.Twr > 1 &&
-                                Telemetry.FuelMarginDeltaV >= 0 && Telemetry.HeatRatio < MaxHeatRatio &&
+                                (IgnoreFuelLimits || Telemetry.FuelMarginDeltaV >= 0) &&
+                                Telemetry.HeatRatio < MaxHeatRatio &&
                                 (MaxGForce <= 0 || Telemetry.GLoad < MaxGForce);
             Telemetry.Feasible = commonSafety && (Telemetry.PredictionReady || Telemetry.OrbitalReachable);
             Telemetry.Warning = BuildWarning();
@@ -949,7 +1044,8 @@ namespace MuMech
                 if (Telemetry.DeorbitDeltaV <= 0) return "Calculating targeted deorbit window";
                 if (!Telemetry.EngineRelightAvailable) return "No engine relight available for deorbit";
                 if (Telemetry.Twr <= 1) return "Landing TWR is below 1";
-                if (Telemetry.FuelMarginDeltaV < 0) return "Insufficient delta-v for deorbit and landing reserve";
+                if (!IgnoreFuelLimits && Telemetry.FuelMarginDeltaV < 0)
+                    return "Insufficient delta-v for deorbit and landing reserve";
                 return Telemetry.Phase == AdvancedLandingPhase.DeorbitBurn
                     ? "Executing targeted deorbit burn"
                     : "Orbit reachable; waiting for targeted deorbit window";
@@ -961,7 +1057,7 @@ namespace MuMech
                     : "Waiting for landing prediction";
             if (!Telemetry.EngineRelightAvailable) return "No engine relight available";
             if (Telemetry.Twr <= 1) return "Landing TWR is below 1";
-            if (Telemetry.FuelMarginDeltaV < 0) return "Insufficient landing delta-v";
+            if (!IgnoreFuelLimits && Telemetry.FuelMarginDeltaV < 0) return "Insufficient landing delta-v";
             if (Telemetry.HeatRatio >= MaxHeatRatio) return "Heat limit exceeded";
             if (MaxGForce > 0 && Telemetry.GLoad >= MaxGForce) return "G-force limit exceeded";
             if (Active && UseUpperRcsStabilization && Telemetry.UpperRcsModules == 0)
@@ -1051,6 +1147,11 @@ namespace MuMech
             if (Telemetry.Phase == phase) return;
             _previousPhase = Telemetry.Phase;
             Telemetry.Phase = phase;
+            if ((_previousPhase == AdvancedLandingPhase.OrbitalCoast ||
+                 _previousPhase == AdvancedLandingPhase.EntryCoast) &&
+                phase != AdvancedLandingPhase.OrbitalCoast &&
+                phase != AdvancedLandingPhase.EntryCoast)
+                StopAutoWarp();
             if (phase == AdvancedLandingPhase.LandingBurn &&
                 _previousPhase != AdvancedLandingPhase.FinalDescent)
                 _landingPwm.Reset();
@@ -1127,7 +1228,9 @@ namespace MuMech
                   $"aLat={Telemetry.CommandedLateralAcceleration:F2}m/s2 aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
                   $"throttle={Telemetry.CommandedThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
-                  $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} twr={Telemetry.Twr:F2} " +
+                  $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} " +
+                  $"entryIn={Telemetry.AtmosphereEntryCountdown:F1}s real={Telemetry.AtmosphereEntryRealSeconds:F1}s " +
+                  $"ignoreFuel={IgnoreFuelLimits} twr={Telemetry.Twr:F2} " +
                   $"p={Telemetry.Probability:F0}% upperRcs={Telemetry.UpperRcsModules} finsNoRoll={Telemetry.RollSuppressedSurfaces} " +
                   $"impact={Telemetry.PredictedLatitude:F5},{Telemetry.PredictedLongitude:F5}");
         }

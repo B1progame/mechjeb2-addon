@@ -89,6 +89,14 @@ namespace MechJebLib.Control
             return Min(maximumSpeed, 1.25 * (missDistance - targetRadius) / usableTime);
         }
 
+        public static double PrecisionAimDeadband(double targetRadius, bool finalDescent)
+        {
+            double radius = Max(0.1, targetRadius);
+            return finalDescent
+                ? Max(0.05, Min(1.0, radius * 0.10))
+                : Max(0.25, Min(5.0, radius * 0.25));
+        }
+
         public static double ProvisionalOrbitalLandingDeltaV(double deorbitDeltaV, double gravity,
             double engineResponseTime, double safetyFactor)
         {
@@ -121,6 +129,13 @@ namespace MechJebLib.Control
         {
             double safeAltitude = protectedAltitude + Max(0, margin);
             return periapsisAltitude > safeAltitude && currentAltitude > safeAltitude;
+        }
+
+        public static double RealTimeCountdown(double gameSeconds, double warpRate)
+        {
+            if (double.IsNaN(gameSeconds) || double.IsInfinity(gameSeconds) || gameSeconds < 0)
+                return double.NaN;
+            return gameSeconds / Max(1, warpRate);
         }
 
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,

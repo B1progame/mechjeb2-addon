@@ -31,6 +31,10 @@ Before deorbit there is deliberately no atmospheric ground-impact prediction. Ad
 
 Optional **Auto-warp to targeted deorbit window** uses `MechJebModuleWarpController`, caps warp at the configured maximum, requires the vessel to be settled and the deorbit-plus-landing budget to be feasible, and returns to 1x before attitude/throttle control begins. Aborting Advanced Landing also cancels only warp initiated by this module.
 
+After the targeted burn, **Entry coast** holds an engine-first retrograde attitude and uses the same warp controller to coast to the atmospheric boundary. Warp stops at the configurable lead time before entry. The UI reports both remaining KSP/game time and estimated real-world time at the current warp rate; the real-time estimate updates continuously as warp changes.
+
+The **Forget fuel limits (cheat)** button persistently bypasses available-delta-v, reserve, and fuel-margin gates. It does not bypass engine relight, landing TWR, heat, G-force, attitude, or trajectory safety checks. Press the button again to restore normal fuel accounting.
+
 The Advanced Landing window reports predicted impact, surface target error, required/available delta-v, reserve margin, TWR, estimated landing probability, burn countdowns, heat/G state, predictor source, and warnings. Debug mode adds impact/target map markers and phase telemetry to `KSP.log`.
 
 The **Keep rocket engine-first / upright** option is enabled by default. It actively damps roll, performs boostback as an upright targetward tilt instead of a full nose-down flip, rejects every below-horizon attitude once the booster approaches apoapsis, constrains final landing tilt, and limits burn throttle while attitude error is unsafe. Disable this option only for vehicles that intentionally perform a full flip. The window shows live attitude error for diagnosing insufficient reaction-wheel, RCS, control-surface, or gimbal authority.
@@ -48,6 +52,8 @@ For a controllable reusable booster:
 - reserve enough delta-v for the powered divert and landing burn—the selected radius cannot compensate for a physically unreachable target.
 
 The window distinguishes **Predicted miss** (where the current simulated trajectory lands) from **Current target range** (where the vessel is now). Horizontal command speed/acceleration, dynamic pressure, upper-RCS count, and roll-disabled fin count make it possible to diagnose whether the controller has enough authority to converge.
+
+The selected precision radius is an acceptance radius, not the controller's aiming point. Powered and final guidance use a much smaller center deadband (10% of the selected radius during final descent, capped at 1 m), combine current position/velocity feedback with predicted-impact feed-forward, and increase terminal lateral response as altitude falls. This avoids merely touching the outside edge of a large radius and reduces predictor lag.
 
 ## Booster recovery staging
 

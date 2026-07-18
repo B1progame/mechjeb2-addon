@@ -94,6 +94,14 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void PrecisionAimDeadbandSeeksInsideSelectedRadius()
+        {
+            Assert.Equal(1, AdvancedLandingMath.PrecisionAimDeadband(50, true), 8);
+            Assert.Equal(0.1, AdvancedLandingMath.PrecisionAimDeadband(1, true), 8);
+            Assert.Equal(5, AdvancedLandingMath.PrecisionAimDeadband(50, false), 8);
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);
@@ -133,6 +141,14 @@ namespace MechJebLibTest.ControlTests
             Assert.True(AdvancedLandingMath.SafeForOrbitalWarp(80000, 100000, 70000, 1000));
             Assert.False(AdvancedLandingMath.SafeForOrbitalWarp(70500, 100000, 70000, 1000));
             Assert.False(AdvancedLandingMath.SafeForOrbitalWarp(80000, 70500, 70000, 1000));
+        }
+
+        [Fact]
+        public void RealTimeCountdownUsesCurrentWarpRate()
+        {
+            Assert.Equal(100, AdvancedLandingMath.RealTimeCountdown(1000, 10), 8);
+            Assert.Equal(1000, AdvancedLandingMath.RealTimeCountdown(1000, 0), 8);
+            Assert.True(double.IsNaN(AdvancedLandingMath.RealTimeCountdown(double.NaN, 100)));
         }
     }
 }

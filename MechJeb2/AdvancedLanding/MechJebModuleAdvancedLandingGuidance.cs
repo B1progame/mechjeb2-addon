@@ -52,7 +52,8 @@ namespace MuMech
                     ? Coordinates.ToStringDMS(telemetry.PredictedLatitude, telemetry.PredictedLongitude)
                     : "N/A", Color.white);
             DrawReadout("Landing Δv", telemetry.RequiredDeltaV.ToString("F0") + " / " +
-                                       telemetry.AvailableDeltaV.ToString("F0") + " m/s", telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
+                                       telemetry.AvailableDeltaV.ToString("F0") + " m/s",
+                autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
             DrawReadout("Targeted deorbit",
                 telemetry.DeorbitDeltaV > 0
                     ? telemetry.DeorbitDeltaV.ToString("F0") + " m/s" +
@@ -60,12 +61,16 @@ namespace MuMech
                     : "N/A",
                 telemetry.OrbitalReachable ? Color.green : Color.white);
             DrawReadout("Fuel margin", telemetry.FuelMarginDeltaV.ToString("F0") + " m/s",
-                telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
+                autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
             DrawReadout("Projected landing TWR", telemetry.Twr.ToString("F2"), telemetry.Twr > 1 ? Color.green : Color.red);
             DrawReadout("Landing probability", telemetry.Probability.ToString("F0") + "%",
                 telemetry.Probability >= 70 ? Color.green : telemetry.Probability >= 40 ? Color.yellow : Color.red);
             DrawReadout("Entry / landing burn",
                 FormatTime(telemetry.EntryBurnCountdown) + " / " + FormatTime(telemetry.LandingBurnCountdown), Color.white);
+            DrawReadout("Atmosphere entry (game / real)",
+                FormatTime(telemetry.AtmosphereEntryCountdown) + " / " +
+                FormatTime(telemetry.AtmosphereEntryRealSeconds),
+                telemetry.AutoWarpActive ? Color.cyan : Color.white);
             DrawReadout("Heat / G", (100 * telemetry.HeatRatio).ToString("F0") + "% / " + telemetry.GLoad.ToString("F1") + "g",
                 telemetry.HeatRatio < autopilot.MaxHeatRatio && telemetry.GLoad < autopilot.MaxGForce ? Color.green : Color.red);
             DrawReadout("Attitude error", telemetry.AttitudeError.ToString("F1") + "°",
@@ -141,6 +146,13 @@ namespace MuMech
 
             GuiUtils.SimpleTextBox("Precision radius:", autopilot.TargetRadius, "m", 55);
             GuiUtils.SimpleTextBox("Fuel reserve:", autopilot.FuelReservePercent, "%", 55);
+            Color fuelButtonColor = GUI.color;
+            if (autopilot.IgnoreFuelLimits) GUI.color = Color.cyan;
+            if (GUILayout.Button(autopilot.IgnoreFuelLimits
+                    ? "Fuel limits forgotten (cheat) — restore"
+                    : "Forget fuel limits (cheat)"))
+                autopilot.IgnoreFuelLimits = !autopilot.IgnoreFuelLimits;
+            GUI.color = fuelButtonColor;
             GuiUtils.SimpleTextBox("Maximum G-force:", autopilot.MaxGForce, "g", 55);
             GuiUtils.SimpleTextBox("Heat safety:", autopilot.MaxHeatRatio, "%", 55);
             GuiUtils.SimpleTextBox("Touchdown speed:", autopilot.TouchdownSpeed, "m/s", 55);
@@ -170,6 +182,7 @@ namespace MuMech
             autopilot.AutoWarp = GUILayout.Toggle(autopilot.AutoWarp, "Auto-warp to targeted deorbit window");
             GUI.enabled = autopilot.AutoWarp;
             GuiUtils.SimpleTextBox("Maximum auto-warp:", autopilot.MaxAutoWarpRate, "x", 55);
+            GuiUtils.SimpleTextBox("Stop before atmosphere:", autopilot.EntryWarpLead, "s", 55);
             GUI.enabled = true;
             autopilot.DeployLandingGear = GUILayout.Toggle(autopilot.DeployLandingGear, "Deploy landing legs / gear");
             autopilot.AllowLandingStaging = GUILayout.Toggle(autopilot.AllowLandingStaging, "Stage to a reserved landing engine if needed");
