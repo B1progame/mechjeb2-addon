@@ -57,6 +57,10 @@ The selected precision radius is an acceptance radius, not the controller's aimi
 
 During atmospheric descent, predicted-impact error is also converted into a bounded RCS correction while the attitude controller uses pitch/yaw control surfaces and fins. The landing engine no longer has a forced 65% throttle floor merely because total surface speed is high; that floor could turn a lateral divert into an unwanted climb. Above the configurable **Allow hover/climb below** altitude, an ascent governor cuts thrust if the vehicle starts rising and keeps near-stationary flight slightly below hover thrust. Full braking remains available during a fast descent, and hover/climb authority is restored inside the terminal capture zone.
 
+Optional **Fast horizontal accelerate / brake transfer** raises the allowable tilt and horizontal speed while the target is distant. It does not intentionally overshoot. A braking-limited planner chooses the fastest velocity that can still be removed with the available lateral acceleration before reaching the center, then continuously lowers the commanded speed as stopping distance shrinks. High dynamic pressure still reduces aerodynamic tilt for stability.
+
+KSP forbids on-rails warp below body-specific altitude limits. In that region MechJeb normally caps its fallback physics warp at 2x. Advanced Landing instead uses the configurable **Maximum physics warp** (4x by default, or modded rates when available) during orbital/entry coast, then switches to on-rails warp automatically when altitude permits. The UI identifies `physics` versus `on-rails` warp and shows the live rate so an altitude-imposed limit is visible rather than appearing as a failed auto-warp.
+
 ## Booster recovery staging
 
 MechJeb's Autostaging Settings now include **Reserve fuel for Advanced Landing**. A configured recovery stage can separate early when its remaining atmospheric delta-v reaches the landing reserve and the live landing TWR is acceptable. The resulting `BoosterRecoveryPlan` records the source vessel, separation stage, target, reserve, requirement, and viability for later vessel/FMRS handoff.

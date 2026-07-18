@@ -71,6 +71,9 @@ namespace MuMech
                 FormatTime(telemetry.AtmosphereEntryCountdown) + " / " +
                 FormatTime(telemetry.AtmosphereEntryRealSeconds),
                 telemetry.AutoWarpActive ? Color.cyan : Color.white);
+            DrawReadout("Warp mode / rate",
+                telemetry.WarpMode + " / " + telemetry.WarpRate.ToString("F1") + "x",
+                telemetry.AutoWarpActive ? Color.cyan : Color.white);
             DrawReadout("Heat / G", (100 * telemetry.HeatRatio).ToString("F0") + "% / " + telemetry.GLoad.ToString("F1") + "g",
                 telemetry.HeatRatio < autopilot.MaxHeatRatio && telemetry.GLoad < autopilot.MaxGForce ? Color.green : Color.red);
             DrawReadout("Attitude error", telemetry.AttitudeError.ToString("F1") + "°",
@@ -180,9 +183,16 @@ namespace MuMech
             autopilot.PoweredTargetCapture =
                 GUILayout.Toggle(autopilot.PoweredTargetCapture, "Start powered divert early to capture target");
             GuiUtils.SimpleTextBox("Maximum targeting tilt:", autopilot.MaximumTargetingTilt, "°", 55);
+            autopilot.FastHorizontalTransfer =
+                GUILayout.Toggle(autopilot.FastHorizontalTransfer, "Fast horizontal accelerate / brake transfer");
+            GUI.enabled = autopilot.FastHorizontalTransfer;
+            GuiUtils.SimpleTextBox("Maximum horizontal speed:", autopilot.MaximumHorizontalTransferSpeed, "m/s", 55);
+            GuiUtils.SimpleTextBox("Horizontal aggressiveness:", autopilot.HorizontalTransferGain, "x", 55);
+            GUI.enabled = true;
             autopilot.AutoWarp = GUILayout.Toggle(autopilot.AutoWarp, "Auto-warp to targeted deorbit window");
             GUI.enabled = autopilot.AutoWarp;
             GuiUtils.SimpleTextBox("Maximum auto-warp:", autopilot.MaxAutoWarpRate, "x", 55);
+            GuiUtils.SimpleTextBox("Maximum physics warp:", autopilot.MaxPhysicsWarpRate, "x", 55);
             GuiUtils.SimpleTextBox("Stop before atmosphere:", autopilot.EntryWarpLead, "s", 55);
             GUI.enabled = true;
             autopilot.DeployLandingGear = GUILayout.Toggle(autopilot.DeployLandingGear, "Deploy landing legs / gear");

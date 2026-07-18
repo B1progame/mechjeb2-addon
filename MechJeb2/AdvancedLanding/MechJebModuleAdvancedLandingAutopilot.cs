@@ -89,10 +89,22 @@ namespace MuMech
         public readonly EditableDouble MaximumTargetingTilt = 25;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public bool FastHorizontalTransfer = true;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble MaximumHorizontalTransferSpeed = 120;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble HorizontalTransferGain = 1.8;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public bool AutoWarp = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDouble MaxAutoWarpRate = 1000;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble MaxPhysicsWarpRate = 4;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDouble EntryWarpLead = 12;
@@ -488,7 +500,7 @@ namespace MuMech
                 Vessel.angularVelocity.magnitude < 0.01)
             {
                 float requestedRate = (float)Max(1, Min(MaxAutoWarpRate, Orbit.period / 10));
-                Core.Warp.WarpRegularAtRate(requestedRate);
+                RequestAvailableWarpRate(requestedRate);
                 _autoWarpActive = true;
             }
             else if (_autoWarpActive)
@@ -514,7 +526,17 @@ namespace MuMech
                 attitudeError < 10 && Vessel.angularVelocity.magnitude < 0.01)
             {
                 double targetUT = VesselState.Time + Telemetry.AtmosphereEntryCountdown - Max(2, EntryWarpLead);
-                Core.Warp.WarpToUT(targetUT, Max(1, MaxAutoWarpRate));
+                if (RegularWarpAvailable())
+                {
+                    Core.Warp.WarpToUT(targetUT, Max(1, MaxAutoWarpRate));
+                }
+                else
+                {
+                    double remaining = Max(1, targetUT - VesselState.Time);
+                    float requestedRate = (float)Min(
+                        Max(1, MaxPhysicsWarpRate), Max(1, remaining / Max(2, EntryWarpLead)));
+                    Core.Warp.WarpPhysicsAtRate(requestedRate);
+                }
                 _autoWarpActive = true;
             }
             else if (_autoWarpActive)
@@ -523,6 +545,18 @@ namespace MuMech
             }
 
             Telemetry.AutoWarpActive = _autoWarpActive;
+        }
+
+        private bool RegularWarpAvailable() =>
+            VesselState.AltitudeASL >= TimeWarp.fetch.GetAltitudeLimit(1, MainBody);
+
+        private void RequestAvailableWarpRate(float requestedRate)
+        {
+            if (RegularWarpAvailable())
+                Core.Warp.WarpRegularAtRate((float)Min(requestedRate, Max(1, MaxAutoWarpRate)));
+            else
+                Core.Warp.WarpPhysicsAtRate((float)Min(
+                    requestedRate, Max(1, MaxPhysicsWarpRate)));
         }
 
         private void DriveDeorbitBurn()
@@ -651,7 +685,10 @@ namespace MuMech
             Vector3d attitude = ForceEngineFirstAttitude
                 ? ((1 - correctionWeight) * retrograde + correctionWeight * corrected).normalized
                 : corrected.normalized;
-            double maxTilt = VesselState.AltitudeASL < 10000 ? 25 : 60;
+            bool highAerodynamicLoad = VesselState.DynamicPressure > 10000;
+            double maxTilt = VesselState.AltitudeASL < 10000
+                ? FastHorizontalTransfer && !highAerodynamicLoad ? 40 : 25
+                : FastHorizontalTransfer ? 70 : 60;
             CommandAttitude(attitude, ForceEngineFirstAttitude ? maxTilt : 180);
 
             if (UseRCS && Telemetry.PredictionReady)
@@ -699,18 +736,29 @@ namespace MuMech
 
             double effectiveRange = effectiveHorizontalError.magnitude;
             double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, final);
-            double maximumHorizontalSpeed = final ? Min(5, Max(0.5, altitude / 15)) : Min(45, Max(8, altitude / 25));
-            double desiredHorizontalSpeed = AdvancedLandingMath.DesiredHorizontalSpeed(
-                effectiveRange, aimDeadband, timeToGo, maximumHorizontalSpeed);
+            double configuredTilt = FastHorizontalTransfer && !final
+                ? Max(MaximumTargetingTilt, 45)
+                : (double)MaximumTargetingTilt;
+            double tiltLimit = Clamp(configuredTilt, 5, final ? 12 : 55);
+            double thrustLimitedLateral = VesselState.LimitedMaxThrustAcceleration * Sin(tiltLimit * PI / 180.0);
+            double maxLateral = Min(final ? 4.0 : 15.0, Max(0.5, thrustLimitedLateral));
+            double maximumHorizontalSpeed = final
+                ? Min(5, Max(0.5, altitude / 15))
+                : FastHorizontalTransfer
+                    ? Min(Max(20, MaximumHorizontalTransferSpeed), Max(15, altitude / 12))
+                    : Min(45, Max(8, altitude / 25));
+            double desiredHorizontalSpeed = FastHorizontalTransfer && !final
+                ? AdvancedLandingMath.BrakingLimitedHorizontalSpeed(
+                    effectiveRange, aimDeadband, timeToGo, maximumHorizontalSpeed,
+                    maxLateral, HorizontalTransferGain)
+                : AdvancedLandingMath.DesiredHorizontalSpeed(
+                    effectiveRange, aimDeadband, timeToGo, maximumHorizontalSpeed);
             Vector3d desiredHorizontalVelocity = effectiveRange > aimDeadband
                 ? effectiveHorizontalError.normalized * desiredHorizontalSpeed
                 : Vector3d.zero;
             Vector3d horizontalVelocityError = desiredHorizontalVelocity - horizontalVelocity;
             double responseTime = final ? 0.55 : 1.2;
             Vector3d desiredLateralAcceleration = horizontalVelocityError / responseTime;
-            double tiltLimit = Clamp(MaximumTargetingTilt, 5, final ? 12 : 35);
-            double thrustLimitedLateral = VesselState.LimitedMaxThrustAcceleration * Sin(tiltLimit * PI / 180.0);
-            double maxLateral = Min(final ? 4.0 : 12.0, Max(0.5, thrustLimitedLateral));
             if (desiredLateralAcceleration.magnitude > maxLateral)
                 desiredLateralAcceleration = desiredLateralAcceleration.normalized * maxLateral;
 
@@ -887,6 +935,12 @@ namespace MuMech
             Telemetry.HeatRatio = MaximumHeatRatio();
             Telemetry.GLoad = Vessel.geeForce_immediate;
             Telemetry.DynamicPressure = VesselState.DynamicPressure;
+            Telemetry.WarpRate = TimeWarp.CurrentRate;
+            Telemetry.WarpMode = TimeWarp.CurrentRate <= 1
+                ? "1x"
+                : TimeWarp.WarpMode == TimeWarp.Modes.HIGH
+                    ? "on-rails"
+                    : "physics";
             Telemetry.CurrentTargetRange = SurfaceDistance(VesselState.CoM - MainBody.position, TargetRelativePosition());
             if (Core.Attitude.Enabled) Telemetry.AttitudeError = Core.Attitude.attitudeAngleFromTarget();
 

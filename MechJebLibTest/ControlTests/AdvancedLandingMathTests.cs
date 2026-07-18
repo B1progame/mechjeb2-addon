@@ -120,6 +120,31 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void HorizontalTransferAcceleratesWhenFarAndBrakesNearCenter()
+        {
+            double far = AdvancedLandingMath.BrakingLimitedHorizontalSpeed(
+                10000, 1, 100, 120, 12, 1.8);
+            double near = AdvancedLandingMath.BrakingLimitedHorizontalSpeed(
+                100, 1, 10, 120, 12, 1.8);
+
+            Assert.Equal(120, far, 8);
+            Assert.True(near < far);
+            Assert.True(near > 0);
+        }
+
+        [Fact]
+        public void HorizontalTransferNeverExceedsBrakingSpeed()
+        {
+            double distance = 100;
+            double acceleration = 4;
+            double speed = AdvancedLandingMath.BrakingLimitedHorizontalSpeed(
+                distance, 0, 1, 1000, acceleration, 10);
+            double brakingLimit = 0.90 * System.Math.Sqrt(2 * acceleration * distance);
+
+            Assert.Equal(brakingLimit, speed, 8);
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);

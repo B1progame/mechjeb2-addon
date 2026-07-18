@@ -57,6 +57,8 @@ namespace MuMech.AdvancedLanding
         public bool EngineRelightAvailable;
         public bool OrbitalReachable;
         public bool AutoWarpActive;
+        public string WarpMode = "1x";
+        public double WarpRate = 1;
         public double TargetError = double.NaN;
         public double AvailableDeltaV;
         public double RequiredDeltaV;
@@ -96,6 +98,8 @@ namespace MuMech.AdvancedLanding
             Feasible = false;
             OrbitalReachable = false;
             AutoWarpActive = false;
+            WarpMode = "1x";
+            WarpRate = 1;
             TargetError = double.NaN;
             AvailableDeltaV = 0;
             RequiredDeltaV = 0;

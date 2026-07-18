@@ -105,6 +105,17 @@ namespace MechJebLib.Control
             return Min(maximumSpeed, 1.25 * (missDistance - targetRadius) / usableTime);
         }
 
+        public static double BrakingLimitedHorizontalSpeed(double missDistance, double targetRadius,
+            double timeToGo, double maximumSpeed, double lateralAcceleration, double aggressiveness)
+        {
+            double distance = Max(0, missDistance - targetRadius);
+            if (distance <= 0 || maximumSpeed <= 0 || lateralAcceleration <= 0) return 0;
+
+            double trackingSpeed = Max(0.25, aggressiveness) * distance / Max(1, timeToGo);
+            double brakingSpeed = 0.90 * Sqrt(2 * lateralAcceleration * distance);
+            return Min(maximumSpeed, Min(trackingSpeed, brakingSpeed));
+        }
+
         public static double PrecisionAimDeadband(double targetRadius, bool finalDescent)
         {
             double radius = Max(0.1, targetRadius);
