@@ -951,6 +951,7 @@ namespace MuMech
                     ? "on-rails"
                     : "physics";
             Telemetry.CurrentTargetRange = SurfaceDistance(VesselState.CoM - MainBody.position, TargetRelativePosition());
+            Telemetry.HorizontalSpeed = VesselState.SpeedSurfaceHorizontal;
             if (Core.Attitude.Enabled) Telemetry.AttitudeError = Core.Attitude.attitudeAngleFromTarget();
 
             bool orbitalApproach = !Telemetry.PredictionReady &&
@@ -1306,7 +1307,7 @@ namespace MuMech
             if (!DebugLogging || VesselState.Time - _lastLog < 2) return;
             _lastLog = VesselState.Time;
             Print($"[AdvancedLanding] phase={Telemetry.Phase} predictor={Telemetry.Predictor} miss={Telemetry.TargetError:F1}m " +
-                  $"range={Telemetry.CurrentTargetRange:F1}m hCmd={Telemetry.DesiredHorizontalSpeed:F1}m/s " +
+                  $"range={Telemetry.CurrentTargetRange:F1}m h={Telemetry.HorizontalSpeed:F1}/{Telemetry.DesiredHorizontalSpeed:F1}m/s " +
                   $"aLat={Telemetry.CommandedLateralAcceleration:F2}m/s2 aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
                   $"throttle={Telemetry.CommandedThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +

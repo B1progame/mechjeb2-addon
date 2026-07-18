@@ -80,8 +80,9 @@ namespace MuMech
                 telemetry.AttitudeError < 10 ? Color.green : telemetry.AttitudeError < 25 ? Color.yellow : Color.red);
             DrawReadout("Roll spin", telemetry.SpinRateRpm.ToString("F1") + " rpm",
                 autopilot.UseSpinStabilization ? Color.cyan : Color.white);
-            DrawReadout("Horizontal command",
-                telemetry.DesiredHorizontalSpeed.ToString("F1") + " m/s / " +
+            DrawReadout("Horizontal actual / command",
+                telemetry.HorizontalSpeed.ToString("F1") + " / " +
+                telemetry.DesiredHorizontalSpeed.ToString("F1") + " m/s; " +
                 telemetry.CommandedLateralAcceleration.ToString("F1") + " m/s²", Color.white);
             DrawReadout("Vertical command",
                 telemetry.CommandedVerticalAcceleration.ToString("F1") + " m/s² / " +
