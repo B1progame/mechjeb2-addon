@@ -173,6 +173,15 @@ namespace MechJebLib.Control
             return Min(Max(1, maximumPhysicsWarpRate), Max(1, remaining / lead));
         }
 
+        public static bool ShouldStartBoostback(bool predictionReady, double targetError, double targetRadius,
+            double timeToImpact, bool ignoreFuelLimits, double fuelMarginDeltaV)
+        {
+            return predictionReady &&
+                   targetError > Max(targetRadius * 2, 100) &&
+                   timeToImpact > 20 &&
+                   (ignoreFuelLimits || fuelMarginDeltaV > 0);
+        }
+
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,
             double targetRadius, double heatRatio, double gLoad, double maxG, bool engineRelightAvailable, bool predictionReady)
         {

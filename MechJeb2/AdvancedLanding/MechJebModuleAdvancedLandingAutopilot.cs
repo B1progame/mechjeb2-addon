@@ -393,7 +393,12 @@ namespace MuMech
                 return;
             }
 
-            if (Telemetry.PredictionReady && Telemetry.TargetError > Max(TargetRadius * 2, 100) && Telemetry.TimeToImpact > 20)
+            // Do not trap an out-of-fuel stage in Boostback with a permanent zero-throttle
+            // command. If the atmospheric trajectory is already established, the next useful
+            // action is to coast/warp to entry and use the remaining aerodynamic authority.
+            if (AdvancedLandingMath.ShouldStartBoostback(
+                    Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius,
+                    Telemetry.TimeToImpact, IgnoreFuelLimits, Telemetry.FuelMarginDeltaV))
             {
                 SetPhase(AdvancedLandingPhase.Boostback);
                 return;
@@ -1306,6 +1311,7 @@ namespace MuMech
                   $"throttle={Telemetry.CommandedThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
                   $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} " +
+                  $"warp={Telemetry.WarpMode}/{Telemetry.WarpRate:F1}x " +
                   $"entryIn={Telemetry.AtmosphereEntryCountdown:F1}s real={Telemetry.AtmosphereEntryRealSeconds:F1}s " +
                   $"ignoreFuel={IgnoreFuelLimits} twr={Telemetry.Twr:F2} " +
                   $"p={Telemetry.Probability:F0}% upperRcs={Telemetry.UpperRcsModules} finsNoRoll={Telemetry.RollSuppressedSurfaces} " +

@@ -159,6 +159,28 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void BoostbackRequiresUsableFuelUnlessFuelLimitsAreIgnored()
+        {
+            Assert.False(AdvancedLandingMath.ShouldStartBoostback(
+                true, 10000, 50, 120, false, -100));
+            Assert.True(AdvancedLandingMath.ShouldStartBoostback(
+                true, 10000, 50, 120, true, -100));
+            Assert.True(AdvancedLandingMath.ShouldStartBoostback(
+                true, 10000, 50, 120, false, 100));
+        }
+
+        [Fact]
+        public void BoostbackRequiresPredictionRangeAndTime()
+        {
+            Assert.False(AdvancedLandingMath.ShouldStartBoostback(
+                false, 10000, 50, 120, true, 100));
+            Assert.False(AdvancedLandingMath.ShouldStartBoostback(
+                true, 90, 50, 120, true, 100));
+            Assert.False(AdvancedLandingMath.ShouldStartBoostback(
+                true, 10000, 50, 20, true, 100));
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);
