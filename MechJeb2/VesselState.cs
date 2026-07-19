@@ -444,6 +444,11 @@ namespace MuMech
             }
         }
 
+        // Binary compatibility for external MechJeb add-ons compiled against the
+        // historical lower-camel-case API (for example BoosterRecovery 0.1).
+        [Obsolete("Use AltitudeBottom")]
+        public double altitudeBottom => AltitudeBottom;
+
         [GeneralInfoItem("#MechJeb_DebugString", InfoItem.Category.Misc, showInEditor = true)] //Debug String
         public void DebugString()
         {

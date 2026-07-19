@@ -86,6 +86,7 @@ namespace MuMech.AdvancedLanding
         public double PeriapsisAltitude = double.NaN;
         public double TimeToImpact = double.NaN;
         public double AltitudeAsl;
+        public double RadarAltitude;
         public double VerticalSpeed;
         public double HeatRatio;
         public double GLoad;
@@ -98,6 +99,9 @@ namespace MuMech.AdvancedLanding
         public double CommandedVerticalAcceleration;
         public double CommandedThrottle;
         public double ActualThrottle;
+        public double ThrustUpProjection;
+        public double TouchdownVerticalSpeed;
+        public bool TouchdownSpeedSafe;
         public double DynamicPressure;
         public int UpperRcsModules;
         public int RollSuppressedSurfaces;
@@ -145,6 +149,7 @@ namespace MuMech.AdvancedLanding
             PeriapsisAltitude = double.NaN;
             TimeToImpact = double.NaN;
             AltitudeAsl = 0;
+            RadarAltitude = 0;
             VerticalSpeed = 0;
             HeatRatio = 0;
             GLoad = 0;
@@ -157,6 +162,9 @@ namespace MuMech.AdvancedLanding
             CommandedVerticalAcceleration = 0;
             CommandedThrottle = 0;
             ActualThrottle = 0;
+            ThrustUpProjection = 0;
+            TouchdownVerticalSpeed = double.NaN;
+            TouchdownSpeedSafe = false;
             DynamicPressure = 0;
             UpperRcsModules = 0;
             RollSuppressedSurfaces = 0;

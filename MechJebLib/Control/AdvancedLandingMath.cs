@@ -26,6 +26,36 @@ namespace MechJebLib.Control
             return safetyFactor * (speed * speed / (2 * netAcceleration) + responseDistance);
         }
 
+        public static bool VerticalBrakingUrgent(double altitude, double stoppingDistance,
+            double descentSpeed, double additionalLeadTime)
+        {
+            if (double.IsNaN(altitude) || double.IsNaN(stoppingDistance) ||
+                double.IsInfinity(altitude)) return true;
+            if (double.IsPositiveInfinity(stoppingDistance)) return true;
+
+            double turnAndIgnitionReserve = Max(0, descentSpeed) * Max(0, additionalLeadTime);
+            return altitude <= Max(0, stoppingDistance) + turnAndIgnitionReserve;
+        }
+
+        public static double VerticalPriorityAcceleration(double commandedAcceleration,
+            double maximumThrustAcceleration, double thrustUpProjection)
+        {
+            if (commandedAcceleration <= 0 || maximumThrustAcceleration <= 0 ||
+                thrustUpProjection <= 0.10) return 0;
+
+            // Compensate for the vertical component actually available while the vehicle
+            // finishes rotating upright. Unlike the old attitude-error cap, this never
+            // suppresses useful upward thrust during an emergency descent.
+            return Min(maximumThrustAcceleration,
+                commandedAcceleration / Max(0.10, thrustUpProjection));
+        }
+
+        public static bool TouchdownSpeedIsSafe(double verticalSpeed, double configuredTouchdownSpeed)
+        {
+            double limit = Max(2.0, Abs(configuredTouchdownSpeed) + 1.0);
+            return Max(0, verticalSpeed) <= limit;
+        }
+
         public static double RequiredLandingDeltaV(double verticalSpeed, double horizontalSpeed, double gravity,
             double thrustAcceleration, double responseTime)
         {
@@ -324,6 +354,12 @@ namespace MechJebLib.Control
         {
             return !double.IsNaN(groundTrackError) && !double.IsInfinity(groundTrackError) &&
                    groundTrackError <= Max(1000, alignmentTolerance);
+        }
+
+        public static bool DeorbitBurnReadyAfterWarp(bool windowOpen, double warpRate)
+        {
+            return windowOpen && !double.IsNaN(warpRate) &&
+                   !double.IsInfinity(warpRate) && warpRate <= 1.01;
         }
 
         public static double OrbitalAlignmentWarpRate(double groundTrackError,

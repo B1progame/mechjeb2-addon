@@ -24,6 +24,33 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void VerticalBrakingIncludesAttitudeAndIgnitionLead()
+        {
+            Assert.False(AdvancedLandingMath.VerticalBrakingUrgent(600, 300, 100, 2));
+            Assert.True(AdvancedLandingMath.VerticalBrakingUrgent(500, 300, 100, 2));
+            Assert.True(AdvancedLandingMath.VerticalBrakingUrgent(
+                1000, double.PositiveInfinity, 50, 2));
+        }
+
+        [Fact]
+        public void VerticalPriorityUsesAvailableUpwardThrustInsteadOfAttitudeCap()
+        {
+            Assert.Equal(30, AdvancedLandingMath.VerticalPriorityAcceleration(
+                25, 30, 0.5), 8);
+            Assert.Equal(25, AdvancedLandingMath.VerticalPriorityAcceleration(
+                25, 30, 1), 8);
+            Assert.Equal(0, AdvancedLandingMath.VerticalPriorityAcceleration(
+                25, 30, -0.1), 8);
+        }
+
+        [Fact]
+        public void TouchdownSafetyRejectsFailedFlightImpactSpeed()
+        {
+            Assert.True(AdvancedLandingMath.TouchdownSpeedIsSafe(1.5, 0.5));
+            Assert.False(AdvancedLandingMath.TouchdownSpeedIsSafe(45.4, 0.5));
+        }
+
+        [Fact]
         public void VerticalThrottleIncreasesNearUnsafeDescent()
         {
             double slow = AdvancedLandingMath.VerticalThrottle(100, -5, 0.5, 9.81, 0, 30);
@@ -236,6 +263,14 @@ namespace MechJebLibTest.ControlTests
             Assert.False(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(20001, 20000));
             Assert.True(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(20000, 20000));
             Assert.False(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(double.NaN, 20000));
+        }
+
+        [Fact]
+        public void DeorbitBurnWaitsForOneTimesWarpAndRevalidatesWindow()
+        {
+            Assert.False(AdvancedLandingMath.DeorbitBurnReadyAfterWarp(true, 1000));
+            Assert.False(AdvancedLandingMath.DeorbitBurnReadyAfterWarp(false, 1));
+            Assert.True(AdvancedLandingMath.DeorbitBurnReadyAfterWarp(true, 1));
         }
 
         [Fact]

@@ -112,6 +112,10 @@ namespace MuMech
                 telemetry.HeatRatio < autopilot.MaxHeatRatio && telemetry.GLoad < autopilot.MaxGForce ? Color.green : Color.red);
             DrawReadout("Attitude error", telemetry.AttitudeError.ToString("F1") + "°",
                 telemetry.AttitudeError < 10 ? Color.green : telemetry.AttitudeError < 25 ? Color.yellow : Color.red);
+            DrawReadout("Radar altitude / thrust up",
+                telemetry.RadarAltitude.ToString("F0") + " m / " +
+                telemetry.ThrustUpProjection.ToString("F2"),
+                telemetry.ThrustUpProjection > 0.5 ? Color.green : Color.yellow);
             DrawReadout("Roll spin", telemetry.SpinRateRpm.ToString("F1") + " rpm",
                 autopilot.UseSpinStabilization ? Color.cyan : Color.white);
             DrawReadout("Horizontal actual / command",
@@ -124,6 +128,10 @@ namespace MuMech
                 (100 * telemetry.ActualThrottle).ToString("F0") + "% actual",
                 telemetry.ActualThrottle <= telemetry.CommandedThrottle + 0.01 ? Color.white : Color.red);
             DrawReadout("Dynamic pressure", telemetry.DynamicPressure.ToSI() + "Pa", Color.white);
+            if (telemetry.Phase == AdvancedLandingPhase.Touchdown)
+                DrawReadout("Touchdown vertical speed",
+                    telemetry.TouchdownVerticalSpeed.ToString("F1") + " m/s",
+                    telemetry.TouchdownSpeedSafe ? Color.green : Color.red);
             DrawReadout("Target direction / airbrakes",
                 (telemetry.TargetAheadOfImpact ? "beyond impact" : "at/behind impact") + " / " +
                 (telemetry.AirbrakesDeployed ? "deployed" : "retracted"),
