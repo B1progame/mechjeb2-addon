@@ -267,6 +267,21 @@ namespace MechJebLib.Control
             return Min(1200, Max(300, 6 * speed + responseDistance));
         }
 
+        public static double AvailableLateralAcceleration(double requestedLateralAcceleration,
+            double verticalThrustAcceleration, double maximumThrustAcceleration,
+            double maximumTiltDegrees)
+        {
+            double requested = Max(0, requestedLateralAcceleration);
+            double vertical = Max(0, verticalThrustAcceleration);
+            double maximum = Max(0, maximumThrustAcceleration);
+            if (requested <= 0 || vertical <= 0 || maximum <= vertical) return 0;
+
+            double thrustCircleLimit = Sqrt(Max(0, maximum * maximum - vertical * vertical));
+            double tiltRadians = Min(89, Max(0, maximumTiltDegrees)) * PI / 180.0;
+            double tiltLimit = vertical * Tan(tiltRadians);
+            return Min(requested, Min(thrustCircleLimit, tiltLimit));
+        }
+
         public static double LimitEarlyAscentAcceleration(double commandedAcceleration, double altitude,
             double verticalSpeed, double hoverCaptureAltitude, double touchdownSpeed, double gravity)
         {

@@ -95,9 +95,12 @@ namespace MuMech.AdvancedLanding
         public double AttitudeError;
         public double SpinRateRpm;
         public double CurrentTargetRange = double.NaN;
+        public double TargetClosingSpeed;
         public double HorizontalSpeed;
         public double DesiredHorizontalSpeed;
+        public double RequestedLateralAcceleration;
         public double CommandedLateralAcceleration;
+        public double AerodynamicCorrectionAngle;
         public double CommandedVerticalAcceleration;
         public double CommandedThrottle;
         public double ActualThrottle;
@@ -160,9 +163,12 @@ namespace MuMech.AdvancedLanding
             AttitudeError = 0;
             SpinRateRpm = 0;
             CurrentTargetRange = double.NaN;
+            TargetClosingSpeed = 0;
             HorizontalSpeed = 0;
             DesiredHorizontalSpeed = 0;
+            RequestedLateralAcceleration = 0;
             CommandedLateralAcceleration = 0;
+            AerodynamicCorrectionAngle = 0;
             CommandedVerticalAcceleration = 0;
             CommandedThrottle = 0;
             ActualThrottle = 0;

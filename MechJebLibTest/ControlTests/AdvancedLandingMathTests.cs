@@ -106,6 +106,17 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void LateralThrustUsesOnlyAuthorityLeftAfterVerticalBraking()
+        {
+            Assert.Equal(0, AdvancedLandingMath.AvailableLateralAcceleration(
+                15, 36, 36, 55), 8);
+            Assert.InRange(AdvancedLandingMath.AvailableLateralAcceleration(
+                15, 10, 36, 45), 9.99, 10.01);
+            Assert.InRange(AdvancedLandingMath.AvailableLateralAcceleration(
+                15, 10, 36, 5), 0.87, 0.88);
+        }
+
+        [Fact]
         public void EarlyAscentGovernorCutsClimbAboveHoverZone()
         {
             Assert.Equal(0, AdvancedLandingMath.LimitEarlyAscentAcceleration(

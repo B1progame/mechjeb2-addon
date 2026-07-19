@@ -961,30 +961,24 @@ namespace MuMech
             Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
                 ? -VesselState.SurfaceVelocity.normalized
                 : VesselState.Up;
-            Vector3d corrected;
-            if (ForceEngineFirstAttitude)
+            Vector3d corrected = Telemetry.CorrectedDirection;
+            if (corrected.sqrMagnitude > 0.01)
             {
-                // Trajectories CorrectedDirection describes the orientation used by
-                // its descent profile. Applying it directly to a thrust-axis attitude
-                // controller is ambiguous for engine-first craft and, in the orbital
-                // run, drove the predicted impact through 360 degrees of longitude.
-                // Keep a stable retrograde base and use only bounded closed-loop
-                // cross-range correction toward the selected target.
-                Vector3d lateral = SurfaceTangentDirection(
-                    Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
-                double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
-                double correctionAngle = Clamp((Telemetry.TargetError - aimDeadband) / 750, 0, 25) * PI / 180.0;
-                corrected = lateral.sqrMagnitude > 0.01
-                    ? (Cos(correctionAngle) * retrograde + Sin(correctionAngle) * lateral).normalized
-                    : retrograde;
+                // Trajectories exposes a navball hint, not a physically solved
+                // autopilot command. Preserve its correction direction (especially
+                // the radial component needed for downrange control), but bound its
+                // arbitrary large-error gain so it cannot command the 45-55 degree
+                // deviations which drove the orbital prediction around Kerbin.
+                if (ForceEngineFirstAttitude && Vector3d.Dot(corrected, retrograde) < 0)
+                    corrected = -corrected;
+                corrected = ClampDirectionFrom(retrograde, corrected, 25);
             }
             else
             {
-                corrected = Telemetry.CorrectedDirection.sqrMagnitude > 0.01
-                    ? Telemetry.CorrectedDirection
-                    : retrograde;
+                corrected = FallbackAerodynamicDirection(retrograde, 25);
             }
             Vector3d attitude = corrected.normalized;
+            Telemetry.AerodynamicCorrectionAngle = Vector3d.Angle(retrograde, attitude);
             bool highAerodynamicLoad = VesselState.DynamicPressure > 10000;
             double maxTilt = VesselState.AltitudeASL < 10000
                 ? FastHorizontalTransfer && !highAerodynamicLoad ? 40 : 25
@@ -1071,8 +1065,6 @@ namespace MuMech
                 AdvancedLandingMath.VerticalBrakingUrgent(
                                         altitude, stoppingDistance, Max(0, -VesselState.SpeedVertical),
                                         Max(2, LandingBurnLead));
-            if (verticalPriority)
-                effectiveHorizontalError = Vector3d.zero;
 
             double effectiveRange = effectiveHorizontalError.magnitude;
             double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, final);
@@ -1101,35 +1093,50 @@ namespace MuMech
             Vector3d desiredLateralAcceleration = horizontalVelocityError / responseTime;
             if (desiredLateralAcceleration.magnitude > maxLateral)
                 desiredLateralAcceleration = desiredLateralAcceleration.normalized * maxLateral;
-
-            Telemetry.DesiredHorizontalSpeed = desiredHorizontalSpeed;
-            Telemetry.CommandedLateralAcceleration = desiredLateralAcceleration.magnitude;
-
-            Vector3d desiredThrust = verticalPriority
-                ? VesselState.Up
-                : (VesselState.Up +
-                   desiredLateralAcceleration / Max(VesselState.GravityForce.magnitude, 2)).normalized;
-            double attitudeError = CommandAttitude(desiredThrust, tiltLimit);
+            Telemetry.RequestedLateralAcceleration = desiredLateralAcceleration.magnitude;
 
             double speedLimit = final ? Max(2, FinalDescentSpeedLimit) : Max(25, FinalDescentSpeedLimit);
-            double commandedAcceleration = AdvancedLandingMath.VerticalAccelerationCommand(
+            double commandedVerticalAcceleration = AdvancedLandingMath.VerticalAccelerationCommand(
                 altitude, VesselState.SpeedVertical, TouchdownSpeed,
                 VesselState.GravityForce.magnitude, VesselState.MaxEngineResponseTime, speedLimit);
             double minAcceleration = VesselState.MinThrustAcceleration;
             double maxAcceleration = VesselState.LimitedMaxThrustAcceleration;
-            commandedAcceleration /= Max(Vector3d.Dot(desiredThrust, VesselState.Up), 0.5);
-            commandedAcceleration = AdvancedLandingMath.LimitEarlyAscentAcceleration(
-                commandedAcceleration, altitude, VesselState.SpeedVertical,
+            commandedVerticalAcceleration = AdvancedLandingMath.LimitEarlyAscentAcceleration(
+                commandedVerticalAcceleration, altitude, VesselState.SpeedVertical,
                 HoverCaptureAltitude, TouchdownSpeed, VesselState.GravityForce.magnitude);
+
+            // Allocate lateral acceleration from the thrust which remains after the
+            // vertical command. The former controller aimed using gravity but throttled
+            // using a different acceleration; during a hard landing burn that could
+            // multiply the real sideways acceleration far beyond the logged request.
+            double availableLateral = AdvancedLandingMath.AvailableLateralAcceleration(
+                desiredLateralAcceleration.magnitude, commandedVerticalAcceleration,
+                maxAcceleration, tiltLimit);
+            if (desiredLateralAcceleration.sqrMagnitude > 1e-8)
+                desiredLateralAcceleration =
+                    desiredLateralAcceleration.normalized * availableLateral;
+
+            Vector3d desiredAcceleration =
+                commandedVerticalAcceleration * VesselState.Up +
+                desiredLateralAcceleration;
+            Vector3d desiredThrust = desiredAcceleration.sqrMagnitude > 1e-8
+                ? desiredAcceleration.normalized
+                : VesselState.Up;
+            double attitudeError = CommandAttitude(desiredThrust, tiltLimit);
+
+            Telemetry.DesiredHorizontalSpeed = desiredHorizontalSpeed;
+            Telemetry.CommandedLateralAcceleration = desiredLateralAcceleration.magnitude;
+
             Vector3d controlledAxis = VesselState.ThrustForward.sqrMagnitude > 1e-8
                 ? VesselState.ThrustForward.normalized
                 : VesselState.Forward.normalized;
             double thrustUpProjection = Vector3d.Dot(controlledAxis, VesselState.Up.normalized);
             Telemetry.ThrustUpProjection = thrustUpProjection;
+            double commandedAcceleration = desiredAcceleration.magnitude;
             if (verticalPriority)
             {
                 commandedAcceleration = AdvancedLandingMath.VerticalPriorityAcceleration(
-                    commandedAcceleration, maxAcceleration, thrustUpProjection);
+                    commandedVerticalAcceleration, maxAcceleration, thrustUpProjection);
             }
             else if (attitudeError > 30)
             {
@@ -1140,16 +1147,18 @@ namespace MuMech
             _landingPwm.MinOffTime = TimeWarp.fixedDeltaTime;
             float throttle = _landingPwm.ThrottleCommand(
                 commandedAcceleration, minAcceleration, maxAcceleration, TimeWarp.fixedDeltaTime);
-            Telemetry.CommandedVerticalAcceleration = commandedAcceleration;
+            Telemetry.CommandedVerticalAcceleration = commandedVerticalAcceleration;
             Telemetry.CommandedThrottle = throttle;
             Core.Thrust.RequestActiveThrottle(throttle, allowZero: true);
 
             if (UseRCS)
             {
                 Core.RCS.Users.Add(this);
-                // SetWorldVelocityError expects the desired delta-v. The previous sign was
-                // reversed and could command translation away from the landing target.
-                Core.RCS.SetWorldVelocityError(desiredHorizontalVelocity - horizontalVelocity);
+                Vector3d rcsCorrection = desiredHorizontalVelocity - horizontalVelocity;
+                const double maximumRcsCorrection = 8;
+                if (rcsCorrection.magnitude > maximumRcsCorrection)
+                    rcsCorrection = rcsCorrection.normalized * maximumRcsCorrection;
+                Core.RCS.SetWorldVelocityError(rcsCorrection);
             }
 
             if (DeployLandingGear && altitude < 1000) Vessel.ActionGroups.SetGroup(KSPActionGroup.Gear, true);
@@ -1461,6 +1470,13 @@ namespace MuMech
                     : "physics";
             Telemetry.CurrentTargetRange = SurfaceDistance(VesselState.CoM - MainBody.position, TargetRelativePosition());
             Telemetry.HorizontalSpeed = VesselState.SpeedSurfaceHorizontal;
+            Vector3d currentTargetDirection = SurfaceTangentDirection(
+                VesselState.CoM - MainBody.position, TargetRelativePosition(), VesselState.Up);
+            Vector3d currentHorizontalVelocity = Vector3d.Exclude(
+                VesselState.Up, VesselState.SurfaceVelocity);
+            Telemetry.TargetClosingSpeed = currentTargetDirection.sqrMagnitude > 1e-8
+                ? Vector3d.Dot(currentHorizontalVelocity, currentTargetDirection)
+                : 0;
             if (Core.Attitude.Enabled) Telemetry.AttitudeError = Core.Attitude.attitudeAngleFromTarget();
 
             bool orbitalApproach = !Telemetry.PredictionReady &&
@@ -1815,6 +1831,49 @@ namespace MuMech
                 : Vector3d.zero;
         }
 
+        private Vector3d FallbackAerodynamicDirection(Vector3d retrograde, double maximumCorrectionDegrees)
+        {
+            Vector3d horizontalVelocity =
+                Vector3d.Exclude(VesselState.Up, VesselState.SurfaceVelocity);
+            Vector3d targetDirection = SurfaceTangentDirection(
+                Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
+            if (horizontalVelocity.sqrMagnitude <= 1e-8 || targetDirection.sqrMagnitude <= 1e-8)
+                return retrograde;
+
+            Vector3d downrange = horizontalVelocity.normalized;
+            Vector3d right = Vector3d.Cross(downrange, VesselState.Up).normalized;
+            double along = Vector3d.Dot(targetDirection, downrange);
+            double cross = Vector3d.Dot(targetDirection, right);
+            Vector3d correction = along * VesselState.Up + cross * right;
+            if (correction.sqrMagnitude <= 1e-8) return retrograde;
+
+            double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
+            double correctionDegrees = Clamp(
+                Max(0, Telemetry.TargetError - aimDeadband) * 0.00005 * 180.0 / PI,
+                0, maximumCorrectionDegrees);
+            double radians = correctionDegrees * PI / 180.0;
+            return (Cos(radians) * retrograde +
+                    Sin(radians) * correction.normalized).normalized;
+        }
+
+        private static Vector3d ClampDirectionFrom(Vector3d reference, Vector3d requested,
+            double maximumAngleDegrees)
+        {
+            if (reference.sqrMagnitude <= 1e-8 || requested.sqrMagnitude <= 1e-8)
+                return reference;
+
+            Vector3d normalizedReference = reference.normalized;
+            Vector3d normalizedRequested = requested.normalized;
+            double angle = Vector3d.Angle(normalizedReference, normalizedRequested);
+            if (angle <= maximumAngleDegrees) return normalizedRequested;
+
+            Vector3d correction = Vector3d.Exclude(normalizedReference, normalizedRequested);
+            if (correction.sqrMagnitude <= 1e-8) return normalizedReference;
+            double radians = maximumAngleDegrees * PI / 180.0;
+            return (Cos(radians) * normalizedReference +
+                    Sin(radians) * correction.normalized).normalized;
+        }
+
         private void SetPhase(AdvancedLandingPhase phase)
         {
             if (Telemetry.Phase == phase) return;
@@ -1926,7 +1985,9 @@ namespace MuMech
             _lastLog = VesselState.Time;
             Print($"[AdvancedLanding] phase={Telemetry.Phase} predictor={Telemetry.Predictor} miss={Telemetry.TargetError:F1}m " +
                   $"range={Telemetry.CurrentTargetRange:F1}m h={Telemetry.HorizontalSpeed:F1}/{Telemetry.DesiredHorizontalSpeed:F1}m/s " +
-                  $"aLat={Telemetry.CommandedLateralAcceleration:F2}m/s2 aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
+                  $"closing={Telemetry.TargetClosingSpeed:F2}m/s " +
+                  $"aLat={Telemetry.CommandedLateralAcceleration:F2}/{Telemetry.RequestedLateralAcceleration:F2}m/s2 " +
+                  $"aeroCorr={Telemetry.AerodynamicCorrectionAngle:F1}deg aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
                   $"throttle={Telemetry.CommandedThrottle:P0}/{Telemetry.ActualThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
                   $"touchdownDv={Telemetry.TouchdownReserveDeltaV:F1}m/s divertDv={Telemetry.PoweredDivertDeltaV:F1}m/s " +

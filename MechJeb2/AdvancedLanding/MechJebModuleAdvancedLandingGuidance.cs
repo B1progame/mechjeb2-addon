@@ -126,6 +126,14 @@ namespace MuMech
                 telemetry.HorizontalSpeed.ToString("F1") + " / " +
                 telemetry.DesiredHorizontalSpeed.ToString("F1") + " m/s; " +
                 telemetry.CommandedLateralAcceleration.ToString("F1") + " m/s²", Color.white);
+            DrawReadout("Target closing / lateral authority",
+                telemetry.TargetClosingSpeed.ToString("+0.0;-0.0;0.0") + " m/s; " +
+                telemetry.CommandedLateralAcceleration.ToString("F1") + " / " +
+                telemetry.RequestedLateralAcceleration.ToString("F1") + " m/s²",
+                telemetry.TargetClosingSpeed >= -0.5 ? Color.green : Color.red);
+            DrawReadout("Aerodynamic correction",
+                telemetry.AerodynamicCorrectionAngle.ToString("F1") + "° from retrograde",
+                telemetry.AerodynamicCorrectionAngle <= 25.1 ? Color.white : Color.red);
             DrawReadout("Vertical command / throttle",
                 telemetry.CommandedVerticalAcceleration.ToString("F1") + " m/s² / " +
                 (100 * telemetry.CommandedThrottle).ToString("F0") + "% cmd / " +
