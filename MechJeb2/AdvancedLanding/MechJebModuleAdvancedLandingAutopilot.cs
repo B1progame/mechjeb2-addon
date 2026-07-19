@@ -340,7 +340,7 @@ namespace MuMech
             switch (Telemetry.Phase)
             {
                 case AdvancedLandingPhase.Preflight:
-                    Core.Thrust.RequestActiveThrottle(0);
+                    RequestCoastThrottle();
                     HoldEntryAttitude();
                     break;
 
@@ -630,7 +630,7 @@ namespace MuMech
 
         private void DriveOrbitalCoast()
         {
-            Core.Thrust.RequestActiveThrottle(0);
+            RequestCoastThrottle();
             // Coast prograde through as many passes as required. Turn retrograde only
             // after the rotating target and proposed atmospheric periapsis are aligned.
             Core.Attitude.attitudeTo(Vector3d.forward, AttitudeReference.ORBIT, this);
@@ -657,7 +657,7 @@ namespace MuMech
 
         private void DriveEntryCoast()
         {
-            Core.Thrust.RequestActiveThrottle(0);
+            RequestCoastThrottle();
             Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
                 ? -VesselState.SurfaceVelocity.normalized
                 : VesselState.Up;
@@ -708,7 +708,7 @@ namespace MuMech
             SetAirbrakes(false);
             if (!TryCalculateDeorbitSolution(out DeorbitSolution solution))
             {
-                Core.Thrust.RequestActiveThrottle(0);
+                RequestCoastThrottle();
                 return;
             }
 
@@ -730,8 +730,7 @@ namespace MuMech
                 : Orbit.PeA < -0.05 * MainBody.Radius;
             if (solution.DeltaV.magnitude < 2 || periapsisEstablished || aimCaptured || aimPassed)
             {
-                Core.Thrust.RequestActiveThrottle(0);
-                Telemetry.CommandedThrottle = 0;
+                RequestCoastThrottle();
                 _deorbitBurnCommitted = false;
                 return;
             }
@@ -832,7 +831,7 @@ namespace MuMech
 
         private void DriveAerodynamicGuidance()
         {
-            Core.Thrust.RequestActiveThrottle(0);
+            RequestCoastThrottle();
 
             Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
                 ? -VesselState.SurfaceVelocity.normalized
@@ -889,6 +888,15 @@ namespace MuMech
                               Telemetry.TargetAheadOfImpact, Telemetry.TargetError, TargetRadius,
                               VesselState.DynamicPressure, Telemetry.HeatRatio, MaxHeatRatio);
             SetAirbrakes(deploy);
+        }
+
+        private void RequestCoastThrottle()
+        {
+            Telemetry.CommandedThrottle = 0;
+            // The thrust controller's minimum-throttle limiter deliberately converts a
+            // zero request into MinThrottle unless allowZero is set. Coast guidance must
+            // opt out or the preceding burn continues, consumes fuel, and blocks warp.
+            Core.Thrust.RequestActiveThrottle(0, allowZero: true);
         }
 
         private void DriveLandingBurn(bool final)
@@ -1143,6 +1151,7 @@ namespace MuMech
             Telemetry.HeatRatio = MaximumHeatRatio();
             Telemetry.GLoad = Vessel.geeForce_immediate;
             Telemetry.DynamicPressure = VesselState.DynamicPressure;
+            Telemetry.ActualThrottle = Vessel.ctrlState == null ? 0 : Vessel.ctrlState.mainThrottle;
             Telemetry.AltitudeAsl = VesselState.AltitudeASL;
             Telemetry.VerticalSpeed = VesselState.SpeedVertical;
             Telemetry.PeriapsisAltitude = Orbit.PeA;
@@ -1474,6 +1483,13 @@ namespace MuMech
             if (Telemetry.Phase == phase) return;
             _previousPhase = Telemetry.Phase;
             Telemetry.Phase = phase;
+            if (!PoweredPhase(phase))
+            {
+                // Cut the prior burn immediately on the phase-transition tick. The normal
+                // coast request below keeps it at zero on subsequent control ticks.
+                Core.Thrust.ThrustOff();
+                Telemetry.CommandedThrottle = 0;
+            }
             if ((_previousPhase == AdvancedLandingPhase.OrbitalCoast ||
                  _previousPhase == AdvancedLandingPhase.EntryCoast) &&
                 phase != AdvancedLandingPhase.OrbitalCoast &&
@@ -1498,6 +1514,13 @@ namespace MuMech
             }
             if (DebugLogging) Print("[AdvancedLanding] " + _previousPhase + " -> " + phase);
         }
+
+        private static bool PoweredPhase(AdvancedLandingPhase phase) =>
+            phase == AdvancedLandingPhase.DeorbitBurn ||
+            phase == AdvancedLandingPhase.Boostback ||
+            phase == AdvancedLandingPhase.EntryBurn ||
+            phase == AdvancedLandingPhase.LandingBurn ||
+            phase == AdvancedLandingPhase.FinalDescent;
 
         private void PrepareLandingEngines()
         {
@@ -1560,7 +1583,7 @@ namespace MuMech
             Print($"[AdvancedLanding] phase={Telemetry.Phase} predictor={Telemetry.Predictor} miss={Telemetry.TargetError:F1}m " +
                   $"range={Telemetry.CurrentTargetRange:F1}m h={Telemetry.HorizontalSpeed:F1}/{Telemetry.DesiredHorizontalSpeed:F1}m/s " +
                   $"aLat={Telemetry.CommandedLateralAcceleration:F2}m/s2 aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
-                  $"throttle={Telemetry.CommandedThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
+                  $"throttle={Telemetry.CommandedThrottle:P0}/{Telemetry.ActualThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
                   $"touchdownDv={Telemetry.TouchdownReserveDeltaV:F1}m/s divertDv={Telemetry.PoweredDivertDeltaV:F1}m/s " +
                   $"protectedDv={Telemetry.ProtectedReserveDeltaV:F1}m/s conserveFuel={Telemetry.FuelConservationActive} " +

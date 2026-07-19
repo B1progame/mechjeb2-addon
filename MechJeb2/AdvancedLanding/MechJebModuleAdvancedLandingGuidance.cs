@@ -118,9 +118,11 @@ namespace MuMech
                 telemetry.HorizontalSpeed.ToString("F1") + " / " +
                 telemetry.DesiredHorizontalSpeed.ToString("F1") + " m/s; " +
                 telemetry.CommandedLateralAcceleration.ToString("F1") + " m/s²", Color.white);
-            DrawReadout("Vertical command",
+            DrawReadout("Vertical command / throttle",
                 telemetry.CommandedVerticalAcceleration.ToString("F1") + " m/s² / " +
-                (100 * telemetry.CommandedThrottle).ToString("F0") + "%", Color.white);
+                (100 * telemetry.CommandedThrottle).ToString("F0") + "% cmd / " +
+                (100 * telemetry.ActualThrottle).ToString("F0") + "% actual",
+                telemetry.ActualThrottle <= telemetry.CommandedThrottle + 0.01 ? Color.white : Color.red);
             DrawReadout("Dynamic pressure", telemetry.DynamicPressure.ToSI() + "Pa", Color.white);
             DrawReadout("Target direction / airbrakes",
                 (telemetry.TargetAheadOfImpact ? "beyond impact" : "at/behind impact") + " / " +

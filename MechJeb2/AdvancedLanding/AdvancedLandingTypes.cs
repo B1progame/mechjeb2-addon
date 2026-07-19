@@ -97,6 +97,7 @@ namespace MuMech.AdvancedLanding
         public double CommandedLateralAcceleration;
         public double CommandedVerticalAcceleration;
         public double CommandedThrottle;
+        public double ActualThrottle;
         public double DynamicPressure;
         public int UpperRcsModules;
         public int RollSuppressedSurfaces;
@@ -155,6 +156,7 @@ namespace MuMech.AdvancedLanding
             CommandedLateralAcceleration = 0;
             CommandedVerticalAcceleration = 0;
             CommandedThrottle = 0;
+            ActualThrottle = 0;
             DynamicPressure = 0;
             UpperRcsModules = 0;
             RollSuppressedSurfaces = 0;
