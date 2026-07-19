@@ -189,6 +189,8 @@ namespace MuMech
         private double _entryBurnStartTime;
         private double _entryBurnIntegratedDeltaV;
         private double _entryBurnBestTargetError = double.PositiveInfinity;
+        private bool _entryBurnSafetyActive;
+        private double _entryBurnRestartAllowedTime;
         private double _fuelEmptySince = double.NaN;
         private double _lastEmergencyDiversionSearch = double.NegativeInfinity;
         private double _emergencyTargetLatitude = double.NaN;
@@ -276,6 +278,8 @@ namespace MuMech
             _entryBurnStartTime = 0;
             _entryBurnIntegratedDeltaV = 0;
             _entryBurnBestTargetError = double.PositiveInfinity;
+            _entryBurnSafetyActive = false;
+            _entryBurnRestartAllowedTime = 0;
             _fuelEmptySince = double.NaN;
             _lastEmergencyDiversionSearch = double.NegativeInfinity;
             _emergencyTargetLatitude = double.NaN;
@@ -529,8 +533,16 @@ namespace MuMech
                 return;
             }
 
-            bool safetyEntryBurn = Telemetry.HeatRatio > MaxHeatRatio - 0.1 ||
-                                   MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.8;
+            bool safetyEntryBurnStart = Telemetry.HeatRatio > MaxHeatRatio - 0.1 ||
+                                        MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.8;
+            bool severeSafetyEntryBurn = Telemetry.HeatRatio > MaxHeatRatio - 0.02 ||
+                                         MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.95;
+            // Once a safety burn starts, use lower clear thresholds. Previously the
+            // start threshold was also the stop threshold, causing rapid EntryBurn/Aero
+            // transitions as heat or G-load jittered around one sample value.
+            bool safetyEntryBurnContinue = _entryBurnSafetyActive &&
+                                           (Telemetry.HeatRatio > MaxHeatRatio - 0.18 ||
+                                            MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.65);
             if (Telemetry.Phase == AdvancedLandingPhase.EntryBurn)
             {
                 double fuelMeasuredDeltaV = Max(0, _entryBurnStartAvailableDeltaV - Telemetry.AvailableDeltaV);
@@ -540,10 +552,10 @@ namespace MuMech
                 if (Telemetry.PredictionReady && IsFinite(Telemetry.TargetError))
                     _entryBurnBestTargetError = Min(_entryBurnBestTargetError, Telemetry.TargetError);
                 bool targetProtected = AdvancedLandingMath.EntryBurnTargetProtectionAllows(
-                    safetyEntryBurn, Telemetry.PredictionReady, Telemetry.TargetError,
+                    safetyEntryBurnContinue, Telemetry.PredictionReady, Telemetry.TargetError,
                     _entryBurnBestTargetError, TargetRadius);
                 if (AdvancedLandingMath.EntryBurnShouldContinue(
-                        safetyEntryBurn, speed, EntryBurnTargetSpeed, spentDeltaV,
+                        safetyEntryBurnContinue, speed, EntryBurnTargetSpeed, spentDeltaV,
                         MaximumEntryBurnDeltaV, elapsed, MaximumEntryBurnDuration) &&
                     targetProtected)
                 {
@@ -552,6 +564,8 @@ namespace MuMech
                 }
 
                 _entryBurnCompleted = true;
+                _entryBurnSafetyActive = false;
+                _entryBurnRestartAllowedTime = VesselState.Time + 5;
             }
 
             bool normalEntryBurn = AdvancedLandingMath.NormalEntryBurnShouldStart(
@@ -561,9 +575,20 @@ namespace MuMech
                 AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
                     Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius,
                     Telemetry.TargetAheadOfImpact);
+            bool safetyEntryBurn = safetyEntryBurnStart &&
+                                   (VesselState.Time >= _entryBurnRestartAllowedTime ||
+                                    severeSafetyEntryBurn);
+            // If the target is beyond the impact point, routine braking destroys the
+            // only remaining recoverable quantity: downrange energy. Pure retrograde
+            // flight also minimizes drag for the Trajectories retrograde profile. Only
+            // an imminent heat/G violation may override this target protection.
+            if (Telemetry.PredictionReady && Telemetry.TargetAheadOfImpact &&
+                !severeSafetyEntryBurn)
+                safetyEntryBurn = false;
             if (MainBody.atmosphere && VesselState.AltitudeASL < atmosphereTop * 0.8 &&
                 (safetyEntryBurn || normalEntryBurn))
             {
+                _entryBurnSafetyActive = safetyEntryBurn;
                 SetPhase(AdvancedLandingPhase.EntryBurn);
                 return;
             }
@@ -575,7 +600,7 @@ namespace MuMech
             }
 
             // In atmospheric-capture mode, establish the deliberately long ballistic arc
-            // first. The 5 km overshoot is then removed by aerodynamic and powered guidance
+            // first. The configured overshoot is then removed by aerodynamic and powered guidance
             // after entry instead of turning the vehicle sideways in orbit.
             if (AtmosphericCaptureOnly && ShouldCoastToAtmosphere())
             {
@@ -613,9 +638,13 @@ namespace MuMech
             double atmosphereTop = MainBody.RealMaxAtmosphereAltitude();
             if (!MainBody.atmosphere || atmosphereTop <= 0) return 0;
 
-            double configuredRatio = Clamp(AtmosphericPeriapsisRatio, 0.05, 0.95);
+            // Treat the persisted value as the shallow-entry preference. Old saves may
+            // contain the former 50% default; beginning the adaptive search that deep
+            // gives a high-drag vessel no opportunity to preserve range.
+            double configuredRatio = Clamp(AtmosphericPeriapsisRatio, 0.80, 0.95);
             double mass = Max(0, VesselState.Mass);
             double dragArea = Max(0, VesselState.AreaDrag);
+            if (dragArea <= 1e-6) dragArea = EstimateVacuumDragArea();
             bool planChanged =
                 !IsFinite(_capturePeriapsisTarget) ||
                 Abs(configuredRatio - _capturePeriapsisRatio) > 1e-6 ||
@@ -627,10 +656,10 @@ namespace MuMech
             double configuredAltitude =
                 AdvancedLandingMath.AtmosphericDeorbitPeriapsisAltitude(
                     atmosphereTop, configuredRatio);
-            // When drag data is unavailable, 75% of the atmosphere is a conservative
-            // fallback. The previous forced 90% Kerbin entry produced only 1-4 Pa and
-            // allowed a compact booster to skip back into orbit.
-            double target = Min(configuredAltitude, 0.75 * atmosphereTop);
+            // When drag data is unavailable, preserve energy with a shallow capture.
+            // A deeper entry can be commanded later, but range lost to drag cannot be
+            // recovered by an unpowered booster.
+            double target = Max(configuredAltitude, 0.80 * atmosphereTop);
 
             if (mass > 0 && dragArea > 0)
             {
@@ -671,6 +700,37 @@ namespace MuMech
                       $"({100 * target / atmosphereTop:F1}% atmosphere) " +
                       $"mass={mass:F1}t dragArea={dragArea:F2}");
             return target;
+        }
+
+        private double EstimateVacuumDragArea()
+        {
+            if (ReflectionUtils.IsLoadedFAR) return 0;
+
+            double areaDrag = 0;
+            for (int i = 0; i < Vessel.parts.Count; i++)
+            {
+                Part part = Vessel.parts[i];
+                if (part == null || part.DragCubes == null ||
+                    part.DragCubes.None || part.ShieldedFromAirstream)
+                    continue;
+
+                double partAreaDrag = 0;
+                int faces = 0;
+                for (int face = 0; face < 6; face++)
+                {
+                    double faceAreaDrag =
+                        part.DragCubes.WeightedDrag[face] *
+                        part.DragCubes.AreaOccluded[face];
+                    if (!IsFinite(faceAreaDrag) || faceAreaDrag < 0) continue;
+                    partAreaDrag += faceAreaDrag;
+                    faces++;
+                }
+
+                if (faces > 0) areaDrag += partAreaDrag / faces;
+            }
+
+            return areaDrag * PhysicsGlobals.DragCubeMultiplier *
+                   PhysicsGlobals.DragMultiplier;
         }
 
         private bool AtmosphericCaptureDragSufficientAt(double periapsisAltitude,
@@ -748,7 +808,10 @@ namespace MuMech
                 Quaternion rotation = Quaternion.AngleAxis((float)rotationDegrees, MainBody.angularVelocity);
                 Vector3d targetAtImpact = rotation * targetNow;
                 double aimOvershoot = AtmosphericCaptureOnly && MainBody.atmosphere
-                    ? Max(0, EntryOvershootDistance)
+                    // Keep a body-scaled minimum energy margin. The logged 5 km
+                    // margin was entirely consumed before useful steering began.
+                    ? Max(Max(0, EntryOvershootDistance),
+                        0.15 * MainBody.RealMaxAtmosphereAltitude())
                     : 0;
                 double aimAngle = AdvancedLandingMath.SurfaceOffsetAngleDegrees(
                     aimOvershoot, MainBody.Radius);
@@ -1047,6 +1110,14 @@ namespace MuMech
             {
                 // Never fly an expired impact correction. Hold the aerodynamically
                 // stable retrograde attitude until either predictor has a fresh result.
+                corrected = retrograde;
+            }
+            else if (Telemetry.TargetAheadOfImpact)
+            {
+                // An undershoot cannot be fixed by adding angle of attack: on a
+                // symmetric engine-first booster that primarily adds drag and caused
+                // the observed 76 m -> 152 km positive-feedback divergence. Preserve
+                // maximum downrange energy until the prediction moves past the target.
                 corrected = retrograde;
             }
             else if (corrected.sqrMagnitude > 0.01)
@@ -2108,6 +2179,7 @@ namespace MuMech
                   $"aLat={Telemetry.CommandedLateralAcceleration:F2}/{Telemetry.RequestedLateralAcceleration:F2}m/s2 " +
                   $"aeroCorr={Telemetry.AerodynamicCorrectionAngle:F1}deg aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
                   $"throttle={Telemetry.CommandedThrottle:P0}/{Telemetry.ActualThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
+                  $"heat={Telemetry.HeatRatio:P0} g={Telemetry.GLoad:F2} " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
                   $"touchdownDv={Telemetry.TouchdownReserveDeltaV:F1}m/s divertDv={Telemetry.PoweredDivertDeltaV:F1}m/s " +
                   $"protectedDv={Telemetry.ProtectedReserveDeltaV:F1}m/s conserveFuel={Telemetry.FuelConservationActive} " +
