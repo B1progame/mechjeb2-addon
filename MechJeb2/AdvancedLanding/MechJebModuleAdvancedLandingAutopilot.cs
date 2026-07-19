@@ -1052,7 +1052,12 @@ namespace MuMech
                     (1 - predictionWeight) * horizontalError +
                     predictionWeight * predictedImpactError;
             }
-            if (Telemetry.FuelConservationActive)
+            // Normal conservation protects the touchdown reserve by abandoning an
+            // unaffordable precision divert. Once the survival option has selected a
+            // reachable land/water target, keep steering toward it with whatever
+            // lateral authority remains; zeroing this error made emergency landings
+            // descend vertically beside the selected safe surface.
+            if (Telemetry.FuelConservationActive && !Telemetry.EmergencyDiversionActive)
                 effectiveHorizontalError = Vector3d.zero;
             double projectedThrustAcceleration = AdvancedLandingMath.PlanningThrustAcceleration(
                 VesselState.LimitedMaxThrustAcceleration, Telemetry.Twr,
