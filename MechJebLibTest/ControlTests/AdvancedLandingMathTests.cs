@@ -222,6 +222,34 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void ShallowAtmosphericDeorbitUsesPeriapsisInsteadOfImpossibleSurfaceImpact()
+        {
+            Assert.Equal(1234, AdvancedLandingMath.AtmosphericDeorbitGuidanceTime(
+                true, 1234, double.NaN), 8);
+            Assert.Equal(2345, AdvancedLandingMath.AtmosphericDeorbitGuidanceTime(
+                false, 1234, 2345), 8);
+        }
+
+        [Fact]
+        public void AtmosphericDeorbitWaitsForPreciseGroundTrackAlignment()
+        {
+            Assert.False(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(20001, 20000));
+            Assert.True(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(20000, 20000));
+            Assert.False(AdvancedLandingMath.AtmosphericDeorbitWindowOpen(double.NaN, 20000));
+        }
+
+        [Fact]
+        public void OrbitalWarpSlowsBeforeAtmosphericAlignmentWindow()
+        {
+            Assert.Equal(100, AdvancedLandingMath.OrbitalAlignmentWarpRate(
+                4000000, 20000, 100), 8);
+            Assert.Equal(5, AdvancedLandingMath.OrbitalAlignmentWarpRate(
+                200000, 20000, 100), 8);
+            Assert.Equal(1, AdvancedLandingMath.OrbitalAlignmentWarpRate(
+                40000, 20000, 100), 8);
+        }
+
+        [Fact]
         public void PredictorGuidedDeorbitThrottlesDownNearAim()
         {
             Assert.Equal(0.35, AdvancedLandingMath.DeorbitTrimThrottle(200000, 500), 8);

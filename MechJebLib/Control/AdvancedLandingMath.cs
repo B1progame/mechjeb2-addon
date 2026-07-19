@@ -312,6 +312,29 @@ namespace MechJebLib.Control
             return atmosphereTop * Min(Max(periapsisRatio, 0.05), 0.95);
         }
 
+        public static double AtmosphericDeorbitGuidanceTime(bool ballisticAtmosphericDeorbit,
+            double periapsisTime, double surfaceImpactTime)
+        {
+            double selected = ballisticAtmosphericDeorbit ? periapsisTime : surfaceImpactTime;
+            return double.IsNaN(selected) || double.IsInfinity(selected) ? double.NaN : selected;
+        }
+
+        public static bool AtmosphericDeorbitWindowOpen(double groundTrackError,
+            double alignmentTolerance)
+        {
+            return !double.IsNaN(groundTrackError) && !double.IsInfinity(groundTrackError) &&
+                   groundTrackError <= Max(1000, alignmentTolerance);
+        }
+
+        public static double OrbitalAlignmentWarpRate(double groundTrackError,
+            double alignmentTolerance, double maximumRate)
+        {
+            if (double.IsNaN(groundTrackError) || double.IsInfinity(groundTrackError)) return 1;
+            double tolerance = Max(1000, alignmentTolerance);
+            if (groundTrackError <= 2 * tolerance) return 1;
+            return Min(Max(1, maximumRate), Max(1, groundTrackError / (2 * tolerance)));
+        }
+
         public static bool DeorbitPeriapsisEstablished(double periapsisAltitude,
             double targetPeriapsisAltitude, double tolerance)
         {

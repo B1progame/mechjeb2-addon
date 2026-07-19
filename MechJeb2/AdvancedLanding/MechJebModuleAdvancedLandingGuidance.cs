@@ -67,6 +67,11 @@ namespace MuMech
                     : "N/A", autopilot.AtmosphericCaptureOnly ? new Color(1.0f, 0.6f, 0.1f) : Color.white);
             DrawReadout("Entry aim error",
                 FormatDistance(telemetry.DeorbitAimError), Color.white);
+            DrawReadout("Orbital alignment error",
+                FormatDistance(telemetry.DeorbitGroundTrackError),
+                IsFinite(telemetry.DeorbitGroundTrackError) &&
+                telemetry.DeorbitGroundTrackError <= autopilot.OrbitalAlignmentTolerance
+                    ? Color.green : Color.white);
             DrawReadout("Altitude / vertical speed",
                 telemetry.AltitudeAsl.ToString("F0") + " m / " +
                 telemetry.VerticalSpeed.ToString("F1") + " m/s", Color.white);
@@ -231,6 +236,7 @@ namespace MuMech
             GuiUtils.SimpleTextBox("Entry periapsis (% atmosphere):", autopilot.AtmosphericPeriapsisRatio, "%", 55);
             GuiUtils.SimpleTextBox("Powered capture below (% atmosphere):", autopilot.AtmosphericCaptureStartRatio, "%", 55);
             GuiUtils.SimpleTextBox("Powered capture minimum q:", autopilot.MinimumCaptureDynamicPressure, "Pa", 55);
+            GuiUtils.SimpleTextBox("Orbital alignment tolerance:", autopilot.OrbitalAlignmentTolerance, "m", 55);
             GUI.enabled = true;
             GuiUtils.SimpleTextBox("Maximum targeting tilt:", autopilot.MaximumTargetingTilt, "°", 55);
             autopilot.FastHorizontalTransfer =

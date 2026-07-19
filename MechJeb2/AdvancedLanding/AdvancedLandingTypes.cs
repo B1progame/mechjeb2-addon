@@ -81,6 +81,7 @@ namespace MuMech.AdvancedLanding
         public double DeorbitAimLatitude = double.NaN;
         public double DeorbitAimLongitude = double.NaN;
         public double DeorbitAimError = double.NaN;
+        public double DeorbitGroundTrackError = double.NaN;
         public double DeorbitPeriapsisTarget = double.NaN;
         public double PeriapsisAltitude = double.NaN;
         public double TimeToImpact = double.NaN;
@@ -138,6 +139,7 @@ namespace MuMech.AdvancedLanding
             DeorbitAimLatitude = double.NaN;
             DeorbitAimLongitude = double.NaN;
             DeorbitAimError = double.NaN;
+            DeorbitGroundTrackError = double.NaN;
             DeorbitPeriapsisTarget = double.NaN;
             PeriapsisAltitude = double.NaN;
             TimeToImpact = double.NaN;

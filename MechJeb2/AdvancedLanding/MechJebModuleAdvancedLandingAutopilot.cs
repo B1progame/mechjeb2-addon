@@ -113,6 +113,9 @@ namespace MuMech
         public readonly EditableDouble MinimumCaptureDynamicPressure = 250;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble OrbitalAlignmentTolerance = 20000;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDouble MaximumTargetingTilt = 25;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -206,6 +209,8 @@ namespace MuMech
             public double AimLatitude;
             public double AimLongitude;
             public double PeriapsisTarget;
+            public double GroundTrackError;
+            public double GuidanceUT;
         }
 
         public MechJebModuleAdvancedLandingAutopilot(MechJebCore core) : base(core)
@@ -520,8 +525,13 @@ namespace MuMech
         private bool DeorbitWindowOpen()
         {
             if (!TryCalculateDeorbitSolution(out DeorbitSolution solution)) return false;
-            bool geometryReady = AdvancedLandingMath.TargetedDeorbitWindowOpen(
-                solution.TargetAngleToOrbitNormal, solution.TargetAheadAngle, solution.PlaneChangeAngle);
+            bool ballisticAtmosphericDeorbit = AdvancedLandingMath.UseBallisticAtmosphericDeorbit(
+                AtmosphericCaptureOnly, MainBody.atmosphere);
+            bool geometryReady = ballisticAtmosphericDeorbit
+                ? AdvancedLandingMath.AtmosphericDeorbitWindowOpen(
+                    solution.GroundTrackError, OrbitalAlignmentTolerance)
+                : AdvancedLandingMath.TargetedDeorbitWindowOpen(
+                    solution.TargetAngleToOrbitNormal, solution.TargetAheadAngle, solution.PlaneChangeAngle);
             return geometryReady && CanAffordTargetedDeorbit(solution.DeltaV.magnitude);
         }
 
@@ -549,8 +559,13 @@ namespace MuMech
                 Vector3d horizontalDeltaV = OrbitalManeuverCalculator.DeltaVToChangePeriapsis(
                     Orbit, VesselState.Time, MainBody.Radius + periapsisTarget);
                 Orbit deorbitTrajectory = Orbit.PerturbedOrbit(VesselState.Time, horizontalDeltaV);
-                double impactUT = deorbitTrajectory.NextTimeOfRadius(VesselState.Time, MainBody.Radius);
-                double freefallTime = impactUT - VesselState.Time;
+                double periapsisUT = deorbitTrajectory.NextPeriapsisTime(VesselState.Time);
+                double surfaceImpactUT = ballisticAtmosphericDeorbit
+                    ? double.NaN
+                    : deorbitTrajectory.NextTimeOfRadius(VesselState.Time, MainBody.Radius);
+                double guidanceUT = AdvancedLandingMath.AtmosphericDeorbitGuidanceTime(
+                    ballisticAtmosphericDeorbit, periapsisUT, surfaceImpactUT);
+                double freefallTime = guidanceUT - VesselState.Time;
                 if (!IsFinite(freefallTime) || freefallTime <= 0) return false;
 
                 double rotationDegrees = MainBody.rotationPeriod > 0
@@ -580,6 +595,8 @@ namespace MuMech
                 double finalHorizontalSpeed = (horizontalVelocity + horizontalDeltaV).magnitude;
                 Vector3d desiredHorizontalVelocity = finalHorizontalSpeed * horizontalToTarget;
                 Vector3d currentRadial = VesselState.CoM - MainBody.position;
+                Vector3d trajectoryAim = deorbitTrajectory.WorldBCIPositionAtUT(guidanceUT);
+                double groundTrackError = SurfaceDistance(trajectoryAim, targetAtImpact);
                 double targetToNormal = Vector3d.Angle(Orbit.OrbitNormal(), targetAtImpact);
                 targetToNormal = Min(targetToNormal, 180 - targetToNormal);
                 solution = new DeorbitSolution
@@ -598,7 +615,9 @@ namespace MuMech
                     AimOvershoot = aimOvershoot,
                     AimLatitude = MainBody.GetLatitude(MainBody.position + aimNow),
                     AimLongitude = MuUtils.ClampDegrees180(MainBody.GetLongitude(MainBody.position + aimNow)),
-                    PeriapsisTarget = periapsisTarget
+                    PeriapsisTarget = periapsisTarget,
+                    GroundTrackError = groundTrackError,
+                    GuidanceUT = guidanceUT
                 };
                 return IsFinite(solution.DeltaV.magnitude);
             }
@@ -612,16 +631,20 @@ namespace MuMech
         private void DriveOrbitalCoast()
         {
             Core.Thrust.RequestActiveThrottle(0);
-            Core.Attitude.attitudeTo(Vector3d.back, AttitudeReference.ORBIT, this);
+            // Coast prograde through as many passes as required. Turn retrograde only
+            // after the rotating target and proposed atmospheric periapsis are aligned.
+            Core.Attitude.attitudeTo(Vector3d.forward, AttitudeReference.ORBIT, this);
             Core.Attitude.SetOmegaTarget(roll: 0);
             Telemetry.AttitudeError = Core.Attitude.attitudeAngleFromTarget();
 
             if (AutoWarp && Telemetry.OrbitalReachable && SafeForOrbitalWarp() &&
                 Vessel.angularVelocity.magnitude < 0.01)
             {
-                float requestedRate = (float)Max(1, Min(MaxAutoWarpRate, Orbit.period / 10));
+                double baseMaximum = Min(MaxAutoWarpRate, Orbit.period / 10);
+                float requestedRate = (float)AdvancedLandingMath.OrbitalAlignmentWarpRate(
+                    Telemetry.DeorbitGroundTrackError, OrbitalAlignmentTolerance, baseMaximum);
                 RequestAvailableWarpRate(requestedRate);
-                _autoWarpActive = true;
+                _autoWarpActive = requestedRate > 1;
             }
             else if (_autoWarpActive)
             {
@@ -1147,6 +1170,7 @@ namespace MuMech
                 Telemetry.DeorbitAimLatitude = deorbitSolution.AimLatitude;
                 Telemetry.DeorbitAimLongitude = deorbitSolution.AimLongitude;
                 Telemetry.DeorbitPeriapsisTarget = deorbitSolution.PeriapsisTarget;
+                Telemetry.DeorbitGroundTrackError = deorbitSolution.GroundTrackError;
                 Telemetry.RequiredDeltaV = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(
                     Telemetry.DeorbitDeltaV, VesselState.GravityForce.magnitude,
                     VesselState.MaxEngineResponseTime, SafetyFactor());
@@ -1542,6 +1566,7 @@ namespace MuMech
                   $"protectedDv={Telemetry.ProtectedReserveDeltaV:F1}m/s conserveFuel={Telemetry.FuelConservationActive} " +
                   $"targetAhead={Telemetry.TargetAheadOfImpact} airbrakes={Telemetry.AirbrakesDeployed} " +
                   $"aimPast={Telemetry.DeorbitAimOvershoot:F0}m aimErr={Telemetry.DeorbitAimError:F0}m " +
+                  $"orbitAimErr={Telemetry.DeorbitGroundTrackError:F0}m " +
                   $"alt={Telemetry.AltitudeAsl:F0}m vs={Telemetry.VerticalSpeed:F1}m/s pea={Telemetry.PeriapsisAltitude:F0}/{Telemetry.DeorbitPeriapsisTarget:F0}m " +
                   $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} " +
                   $"warp={Telemetry.WarpMode}/{Telemetry.WarpRate:F1}x " +
