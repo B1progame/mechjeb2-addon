@@ -193,6 +193,10 @@ namespace MuMech
         private double _lastEmergencyDiversionSearch = double.NegativeInfinity;
         private double _emergencyTargetLatitude = double.NaN;
         private double _emergencyTargetLongitude = double.NaN;
+        private double _capturePeriapsisTarget = double.NaN;
+        private double _capturePeriapsisRatio = double.NaN;
+        private double _capturePlanMass = double.NaN;
+        private double _capturePlanDragArea = double.NaN;
         private CelestialBody _syncedTargetBody;
         private double _syncedTargetLatitude = double.NaN;
         private double _syncedTargetLongitude = double.NaN;
@@ -276,6 +280,10 @@ namespace MuMech
             _lastEmergencyDiversionSearch = double.NegativeInfinity;
             _emergencyTargetLatitude = double.NaN;
             _emergencyTargetLongitude = double.NaN;
+            _capturePeriapsisTarget = double.NaN;
+            _capturePeriapsisRatio = double.NaN;
+            _capturePlanMass = double.NaN;
+            _capturePlanDragArea = double.NaN;
             _landingPwm.Reset();
             ConfigureStabilizationHardware();
             SetPhase(AdvancedLandingPhase.Preflight);
@@ -595,7 +603,84 @@ namespace MuMech
             SetPhase(AdvancedLandingPhase.Preflight);
         }
 
-        private double DeorbitPeriapsisThreshold() => MainBody.atmosphere ? MainBody.RealMaxAtmosphereAltitude() : 0;
+        private double DeorbitPeriapsisThreshold() =>
+            AtmosphericCaptureOnly && MainBody.atmosphere
+                ? AtmosphericCapturePeriapsisTarget()
+                : MainBody.atmosphere ? MainBody.RealMaxAtmosphereAltitude() : 0;
+
+        private double AtmosphericCapturePeriapsisTarget()
+        {
+            double atmosphereTop = MainBody.RealMaxAtmosphereAltitude();
+            if (!MainBody.atmosphere || atmosphereTop <= 0) return 0;
+
+            double configuredRatio = Clamp(AtmosphericPeriapsisRatio, 0.05, 0.95);
+            double mass = Max(0, VesselState.Mass);
+            double dragArea = Max(0, VesselState.AreaDrag);
+            bool planChanged =
+                !IsFinite(_capturePeriapsisTarget) ||
+                Abs(configuredRatio - _capturePeriapsisRatio) > 1e-6 ||
+                !IsFinite(_capturePlanMass) || Abs(mass - _capturePlanMass) > Max(0.1, 0.1 * mass) ||
+                !IsFinite(_capturePlanDragArea) ||
+                Abs(dragArea - _capturePlanDragArea) > Max(0.01, 0.1 * dragArea);
+            if (!planChanged) return _capturePeriapsisTarget;
+
+            double configuredAltitude =
+                AdvancedLandingMath.AtmosphericDeorbitPeriapsisAltitude(
+                    atmosphereTop, configuredRatio);
+            // When drag data is unavailable, 75% of the atmosphere is a conservative
+            // fallback. The previous forced 90% Kerbin entry produced only 1-4 Pa and
+            // allowed a compact booster to skip back into orbit.
+            double target = Min(configuredAltitude, 0.75 * atmosphereTop);
+
+            if (mass > 0 && dragArea > 0)
+            {
+                double upper = Min(configuredAltitude, 0.90 * atmosphereTop);
+                double lower = Min(upper, 0.45 * atmosphereTop);
+                if (AtmosphericCaptureDragSufficientAt(upper, mass, dragArea))
+                {
+                    target = upper;
+                }
+                else if (!AtmosphericCaptureDragSufficientAt(lower, mass, dragArea))
+                {
+                    target = lower;
+                }
+                else
+                {
+                    // Find the shallowest entry that still has enough integrated drag
+                    // to capture this vessel. This accounts for body atmosphere, vessel
+                    // mass, and exposed drag area without hard-coding Kerbin altitudes.
+                    for (int i = 0; i < 20; i++)
+                    {
+                        double middle = 0.5 * (lower + upper);
+                        if (AtmosphericCaptureDragSufficientAt(middle, mass, dragArea))
+                            lower = middle;
+                        else
+                            upper = middle;
+                    }
+
+                    target = lower;
+                }
+            }
+
+            _capturePeriapsisTarget = target;
+            _capturePeriapsisRatio = configuredRatio;
+            _capturePlanMass = mass;
+            _capturePlanDragArea = dragArea;
+            if (DebugLogging)
+                Print($"[AdvancedLanding] atmospheric capture plan pea={target:F0}m " +
+                      $"({100 * target / atmosphereTop:F1}% atmosphere) " +
+                      $"mass={mass:F1}t dragArea={dragArea:F2}");
+            return target;
+        }
+
+        private bool AtmosphericCaptureDragSufficientAt(double periapsisAltitude,
+            double mass, double dragArea)
+        {
+            double chord = AdvancedLandingMath.AtmosphericCaptureChordLength(
+                MainBody.Radius, MainBody.RealMaxAtmosphereAltitude(), periapsisAltitude);
+            double dragLength = MainBody.DragLength(periapsisAltitude, dragArea, mass);
+            return AdvancedLandingMath.AtmosphericCaptureDragSufficient(dragLength, chord);
+        }
 
         private bool NeedsDeorbitBurn() =>
             !Telemetry.PredictionReady && Orbit.PeA >= DeorbitPeriapsisThreshold();
@@ -641,13 +726,7 @@ namespace MuMech
                 bool ballisticAtmosphericDeorbit = AdvancedLandingMath.UseBallisticAtmosphericDeorbit(
                     AtmosphericCaptureOnly, MainBody.atmosphere);
                 double periapsisTarget = ballisticAtmosphericDeorbit
-                    ? AdvancedLandingMath.AtmosphericDeorbitPeriapsisAltitude(
-                        MainBody.RealMaxAtmosphereAltitude(),
-                        // A deep first cut cannot be undone. The logged 35 km Kerbin
-                        // periapsis produced a 429 km undershoot before guidance even
-                        // began. Enter shallow, obtain a live atmospheric prediction,
-                        // then trim retrograde if the impact still lies beyond the aim.
-                        Max(0.90, AtmosphericPeriapsisRatio))
+                    ? AtmosphericCapturePeriapsisTarget()
                     : -0.10 * MainBody.Radius;
                 Vector3d horizontalDeltaV = OrbitalManeuverCalculator.DeltaVToChangePeriapsis(
                     Orbit, VesselState.Time, MainBody.Radius + periapsisTarget);
@@ -961,8 +1040,16 @@ namespace MuMech
             Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
                 ? -VesselState.SurfaceVelocity.normalized
                 : VesselState.Up;
-            Vector3d corrected = Telemetry.CorrectedDirection;
-            if (corrected.sqrMagnitude > 0.01)
+            Vector3d corrected = Telemetry.PredictionReady
+                ? Telemetry.CorrectedDirection
+                : Vector3d.zero;
+            if (!Telemetry.PredictionReady)
+            {
+                // Never fly an expired impact correction. Hold the aerodynamically
+                // stable retrograde attitude until either predictor has a fresh result.
+                corrected = retrograde;
+            }
+            else if (corrected.sqrMagnitude > 0.01)
             {
                 // Trajectories exposes a navball hint, not a physically solved
                 // autopilot command. Preserve its correction direction (especially
@@ -1012,9 +1099,10 @@ namespace MuMech
 
             bool deploy = AirbrakeMode == AdvancedLandingAirbrakeMode.Deployed ||
                           AirbrakeMode == AdvancedLandingAirbrakeMode.Automatic &&
-                          AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
-                              Telemetry.TargetAheadOfImpact, Telemetry.TargetError, TargetRadius,
-                              VesselState.DynamicPressure, Telemetry.HeatRatio, MaxHeatRatio);
+                          (!Telemetry.PredictionReady && AtmosphericCaptureOnly ||
+                           AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                               Telemetry.TargetAheadOfImpact, Telemetry.TargetError, TargetRadius,
+                               VesselState.DynamicPressure, Telemetry.HeatRatio, MaxHeatRatio));
             SetAirbrakes(deploy);
         }
 
@@ -1412,7 +1500,23 @@ namespace MuMech
             Vector3d impact = Vector3d.zero;
             Vector3d corrected = Vector3d.zero;
             double timeToImpact = double.NaN;
-            bool trajectoriesReady = UseTrajectories && _trajectories.TryGetPrediction(out impact, out timeToImpact, out corrected);
+            bool predictionAtOneTimesWarp =
+                AdvancedLandingMath.PredictionAllowedAtWarp(TimeWarp.CurrentRate);
+            bool trajectoriesReady = predictionAtOneTimesWarp && UseTrajectories &&
+                                     _trajectories.TryGetPrediction(
+                                         out impact, out timeToImpact, out corrected);
+
+            // Clear the previous sample before selecting a provider. Trajectories can
+            // temporarily return no impact during warp or profile recalculation; keeping
+            // its old longitude and corrected direction caused maximum-tilt steering
+            // based on a prediction more than 1,700 km out of date.
+            Telemetry.PredictionReady = false;
+            Telemetry.PredictedImpact = Vector3d.zero;
+            Telemetry.CorrectedDirection = Vector3d.zero;
+            Telemetry.TimeToImpact = double.NaN;
+            Telemetry.PredictedLatitude = double.NaN;
+            Telemetry.PredictedLongitude = double.NaN;
+            Telemetry.TargetError = double.NaN;
 
             if (trajectoriesReady)
             {
@@ -1428,11 +1532,21 @@ namespace MuMech
             else
             {
                 ReentrySimulation.Result result = _nativePredictor.Result;
-                Telemetry.Predictor = ReflectionUtils.IsLoadedFAR ? "MechJeb stock fallback (FAR advisory)" : "MechJeb native";
-                Telemetry.PredictionReady = result != null && result.Outcome == ReentrySimulation.Outcome.LANDED;
+                bool nativeFresh = predictionAtOneTimesWarp && result != null &&
+                                   result.Body == MainBody &&
+                                   AdvancedLandingMath.PredictionSampleFresh(
+                                       VesselState.Time, result.InputUT, 30);
+                Telemetry.Predictor = !predictionAtOneTimesWarp
+                    ? "Waiting for 1x prediction"
+                    : ReflectionUtils.IsLoadedFAR
+                        ? "MechJeb stock fallback (FAR advisory)"
+                        : "MechJeb native";
+                Telemetry.PredictionReady = nativeFresh &&
+                                            result.Outcome == ReentrySimulation.Outcome.LANDED;
                 if (Telemetry.PredictionReady)
                 {
                     Telemetry.PredictedImpact = result.WorldEndPosition() - MainBody.position;
+                    Telemetry.CorrectedDirection = Vector3d.zero;
                     Telemetry.TimeToImpact = result.EndUT - VesselState.Time;
                     Telemetry.PredictedLatitude = result.EndPosition.Latitude;
                     Telemetry.PredictedLongitude = result.EndPosition.Longitude;

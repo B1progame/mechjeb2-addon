@@ -430,6 +430,44 @@ namespace MechJebLib.Control
             return atmosphereTop * Min(Max(periapsisRatio, 0.05), 0.95);
         }
 
+        public static double AtmosphericCaptureChordLength(double bodyRadius, double atmosphereTop,
+            double periapsisAltitude)
+        {
+            double outerRadius = Max(0, bodyRadius) + Max(0, atmosphereTop);
+            double periapsisRadius = Max(0, bodyRadius) +
+                                     Min(Max(0, periapsisAltitude), Max(0, atmosphereTop));
+            if (outerRadius <= 0 || periapsisRadius >= outerRadius) return 0;
+            return 2 * Sqrt(Max(0,
+                outerRadius * outerRadius - periapsisRadius * periapsisRadius));
+        }
+
+        public static bool AtmosphericCaptureDragSufficient(double dragLength,
+            double atmosphericChordLength)
+        {
+            if (double.IsNaN(dragLength) || double.IsInfinity(dragLength) ||
+                double.IsNaN(atmosphericChordLength) || double.IsInfinity(atmosphericChordLength) ||
+                dragLength <= 0 || atmosphericChordLength <= 0) return false;
+
+            // Density is greatest only near periapsis, so require the characteristic
+            // drag length at periapsis to be substantially shorter than the complete
+            // atmospheric chord. This is deliberately conservative when no full
+            // trajectory prediction is available.
+            return dragLength <= 0.25 * atmosphericChordLength;
+        }
+
+        public static bool PredictionAllowedAtWarp(double warpRate) =>
+            !double.IsNaN(warpRate) && !double.IsInfinity(warpRate) &&
+            warpRate <= 1.01;
+
+        public static bool PredictionSampleFresh(double currentUt, double sampleUt,
+            double maximumAge)
+        {
+            if (double.IsNaN(currentUt) || double.IsInfinity(currentUt) ||
+                double.IsNaN(sampleUt) || double.IsInfinity(sampleUt)) return false;
+            double age = currentUt - sampleUt;
+            return age >= -1 && age <= Max(0, maximumAge);
+        }
+
         public static double AtmosphericDeorbitGuidanceTime(bool ballisticAtmosphericDeorbit,
             double periapsisTime, double surfaceImpactTime)
         {

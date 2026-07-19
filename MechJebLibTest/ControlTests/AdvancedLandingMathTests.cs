@@ -300,6 +300,29 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void AtmosphericCaptureRequiresEnoughDragAcrossTheEntryChord()
+        {
+            double chord = AdvancedLandingMath.AtmosphericCaptureChordLength(
+                600000, 70000, 55000);
+            Assert.InRange(chord, 281000, 283000);
+            Assert.True(AdvancedLandingMath.AtmosphericCaptureDragSufficient(
+                0.24 * chord, chord));
+            Assert.False(AdvancedLandingMath.AtmosphericCaptureDragSufficient(
+                0.26 * chord, chord));
+            Assert.False(AdvancedLandingMath.AtmosphericCaptureDragSufficient(
+                double.MaxValue, chord));
+        }
+
+        [Fact]
+        public void PredictionGuidanceRejectsWarpedAndExpiredSamples()
+        {
+            Assert.True(AdvancedLandingMath.PredictionAllowedAtWarp(1));
+            Assert.False(AdvancedLandingMath.PredictionAllowedAtWarp(5));
+            Assert.True(AdvancedLandingMath.PredictionSampleFresh(100, 90, 30));
+            Assert.False(AdvancedLandingMath.PredictionSampleFresh(100, 60, 30));
+        }
+
+        [Fact]
         public void ShallowAtmosphericDeorbitUsesPeriapsisInsteadOfImpossibleSurfaceImpact()
         {
             Assert.Equal(1234, AdvancedLandingMath.AtmosphericDeorbitGuidanceTime(
