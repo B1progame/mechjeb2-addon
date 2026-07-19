@@ -86,7 +86,11 @@ namespace MuMech
                 FormatDeltaV(telemetry.ProtectedReserveDeltaV),
                 telemetry.FuelConservationActive ? Color.yellow : Color.white);
             DrawReadout("Fuel strategy",
-                telemetry.FuelConservationActive
+                telemetry.EmergencyDiversionActive
+                    ? telemetry.EmergencyDiversionToWater
+                        ? "Fuel-out water ditching"
+                        : "Emergency divert to dry land"
+                    : telemetry.FuelConservationActive
                     ? telemetry.TargetAheadOfImpact
                         ? "Extend glide; save touchdown fuel"
                         : "Aerodynamic landing; save touchdown fuel"
@@ -208,6 +212,9 @@ namespace MuMech
             autopilot.ConserveFuelWhenLandingAtRisk =
                 GUILayout.Toggle(autopilot.ConserveFuelWhenLandingAtRisk,
                     "Conserve fuel when precision landing is no longer affordable");
+            autopilot.EmergencySurvivalDiversion =
+                GUILayout.Toggle(autopilot.EmergencySurvivalDiversion,
+                    "Emergency survival divert: land if short, water if empty");
             GuiUtils.SimpleTextBox("Maximum G-force:", autopilot.MaxGForce, "g", 55);
             GuiUtils.SimpleTextBox("Heat safety:", autopilot.MaxHeatRatio, "%", 55);
             GuiUtils.SimpleTextBox("Touchdown speed:", autopilot.TouchdownSpeed, "m/s", 55);

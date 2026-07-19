@@ -146,6 +146,9 @@ namespace MuMech
         public bool ConserveFuelWhenLandingAtRisk = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public bool EmergencySurvivalDiversion;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public bool DeployLandingGear = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -186,6 +189,8 @@ namespace MuMech
         private double _entryBurnStartTime;
         private double _entryBurnIntegratedDeltaV;
         private double _entryBurnBestTargetError = double.PositiveInfinity;
+        private double _fuelEmptySince = double.NaN;
+        private double _lastEmergencyDiversionSearch = double.NegativeInfinity;
         private CelestialBody _syncedTargetBody;
         private double _syncedTargetLatitude = double.NaN;
         private double _syncedTargetLongitude = double.NaN;
@@ -265,6 +270,8 @@ namespace MuMech
             _entryBurnStartTime = 0;
             _entryBurnIntegratedDeltaV = 0;
             _entryBurnBestTargetError = double.PositiveInfinity;
+            _fuelEmptySince = double.NaN;
+            _lastEmergencyDiversionSearch = double.NegativeInfinity;
             _landingPwm.Reset();
             ConfigureStabilizationHardware();
             SetPhase(AdvancedLandingPhase.Preflight);
@@ -341,6 +348,7 @@ namespace MuMech
             _lastAirborneVerticalSpeed = VesselState.SpeedVertical;
             SynchronizeTarget(false);
             UpdateTelemetry(false);
+            if (UpdateEmergencySurvivalTarget()) UpdateTelemetry(true);
             UpdatePhase();
             LogState();
         }
@@ -950,7 +958,11 @@ namespace MuMech
                 : FastHorizontalTransfer ? 70 : 60;
             CommandAttitude(attitude, ForceEngineFirstAttitude ? maxTilt : 180);
 
-            if (UseRCS && Telemetry.PredictionReady && !Telemetry.FuelConservationActive)
+            bool emergencyFinalCorrection = Telemetry.EmergencyDiversionActive &&
+                                            (VesselState.AltitudeASL < 5000 ||
+                                             IsFinite(Telemetry.TimeToImpact) && Telemetry.TimeToImpact < 30);
+            if (UseRCS && Telemetry.PredictionReady &&
+                (!Telemetry.FuelConservationActive || emergencyFinalCorrection))
             {
                 Vector3d predictedImpactError = Vector3d.Exclude(
                     VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
@@ -1203,6 +1215,128 @@ namespace MuMech
             _syncedTargetLongitude = Core.Target.targetLongitude;
             _syncedTargetAltitude = altitude;
             _lastTargetSync = VesselState.Time;
+        }
+
+        private bool UpdateEmergencySurvivalTarget()
+        {
+            if (!EmergencySurvivalDiversion || IgnoreFuelLimits || !MainBody.ocean ||
+                !Telemetry.PredictionReady)
+            {
+                _fuelEmptySince = double.NaN;
+                return false;
+            }
+
+            bool empty = Telemetry.AvailableDeltaV <= 0.5;
+            bool targetUnaffordable = !empty && Telemetry.FuelMarginDeltaV < 0;
+            if (!empty && !targetUnaffordable)
+            {
+                _fuelEmptySince = double.NaN;
+                return false;
+            }
+
+            if (empty && double.IsNaN(_fuelEmptySince))
+            {
+                _fuelEmptySince = VesselState.Time;
+                return false;
+            }
+
+            // Stage-stat simulations can briefly report zero while refreshing. Require a
+            // sustained empty reading before changing from a dry-land diversion to ditching.
+            if (empty && VesselState.Time - _fuelEmptySince < 1.5)
+                return false;
+            if (Telemetry.EmergencyDiversionActive &&
+                (Telemetry.EmergencyDiversionToWater || !empty))
+                return false;
+            if (VesselState.Time - _lastEmergencyDiversionSearch < 10) return false;
+
+            _lastEmergencyDiversionSearch = VesselState.Time;
+            double predictedTerrain = MainBody.TerrainAltitude(
+                Telemetry.PredictedLatitude, Telemetry.PredictedLongitude, true);
+            double timeToImpact = IsFinite(Telemetry.TimeToImpact) ? Max(0, Telemetry.TimeToImpact) : 0;
+            double reachableRadius = Clamp(
+                VesselState.SpeedSurfaceHorizontal * timeToImpact * 0.35 +
+                Max(0, VesselState.AltitudeASL) * 0.5, 10000, 350000);
+            bool seekLand = !empty;
+            bool impactAlreadySuitable = seekLand ? predictedTerrain > 1 : predictedTerrain <= 1;
+            double latitude = Telemetry.PredictedLatitude;
+            double longitude = Telemetry.PredictedLongitude;
+            double distance = 0;
+            if (!impactAlreadySuitable &&
+                !TryFindNearestSurfaceType(Telemetry.PredictedLatitude, Telemetry.PredictedLongitude,
+                    reachableRadius, seekLand, out latitude, out longitude, out distance))
+            {
+                if (DebugLogging)
+                    Print($"[AdvancedLanding] emergency {(seekLand ? "land" : "water")} search found no " +
+                          $"suitable surface within {reachableRadius:F0}m");
+                return false;
+            }
+
+            Core.Target.SetPositionTarget(MainBody, latitude, longitude);
+            Telemetry.EmergencyDiversionActive = true;
+            Telemetry.EmergencyDiversionToWater = !seekLand;
+            SynchronizeTarget(true);
+            if (DebugLogging)
+                Print($"[AdvancedLanding] emergency {(seekLand ? "land" : "water")} retarget " +
+                      $"lat={latitude:F6} lon={longitude:F6} " +
+                      $"distanceFromImpact={distance:F0}m");
+            return true;
+        }
+
+        private bool TryFindNearestSurfaceType(double originLatitude, double originLongitude,
+            double maximumDistance, bool seekLand, out double latitude, out double longitude,
+            out double distance)
+        {
+            latitude = double.NaN;
+            longitude = double.NaN;
+            distance = double.NaN;
+            const int bearings = 24;
+            double radius = 2000;
+
+            while (radius <= maximumDistance)
+            {
+                bool found = false;
+                double bestAltitude = double.NegativeInfinity;
+                for (int i = 0; i < bearings; i++)
+                {
+                    DestinationPoint(originLatitude, originLongitude,
+                        360.0 * i / bearings, radius, out double candidateLatitude,
+                        out double candidateLongitude);
+                    double altitude = MainBody.TerrainAltitude(
+                        candidateLatitude, candidateLongitude, true);
+                    bool suitable = seekLand ? altitude > 1 : altitude <= 1;
+                    if (!suitable || seekLand && altitude <= bestAltitude) continue;
+
+                    found = true;
+                    bestAltitude = altitude;
+                    latitude = candidateLatitude;
+                    longitude = candidateLongitude;
+                    distance = radius;
+                }
+
+                // The first ring containing land is the nearest sampled reachable shore.
+                if (found) return true;
+                radius = Min(maximumDistance + 1, radius * 1.65);
+            }
+
+            return false;
+        }
+
+        private void DestinationPoint(double latitude, double longitude, double bearing,
+            double distance, out double destinationLatitude, out double destinationLongitude)
+        {
+            double angularDistance = distance / Max(1, MainBody.Radius);
+            double latitudeRadians = latitude * PI / 180.0;
+            double longitudeRadians = longitude * PI / 180.0;
+            double bearingRadians = bearing * PI / 180.0;
+            double destinationLatitudeRadians = Asin(
+                Sin(latitudeRadians) * Cos(angularDistance) +
+                Cos(latitudeRadians) * Sin(angularDistance) * Cos(bearingRadians));
+            double destinationLongitudeRadians = longitudeRadians + Atan2(
+                Sin(bearingRadians) * Sin(angularDistance) * Cos(latitudeRadians),
+                Cos(angularDistance) - Sin(latitudeRadians) * Sin(destinationLatitudeRadians));
+
+            destinationLatitude = destinationLatitudeRadians * 180.0 / PI;
+            destinationLongitude = MuUtils.ClampDegrees180(destinationLongitudeRadians * 180.0 / PI);
         }
 
         private void UpdateTelemetry(bool force)
@@ -1509,6 +1643,10 @@ namespace MuMech
                 return _trajectories.Available && !string.IsNullOrEmpty(_trajectories.LastError)
                     ? "Waiting for trajectory: " + _trajectories.LastError
                     : "Waiting for landing prediction";
+            if (Telemetry.EmergencyDiversionActive)
+                return Telemetry.EmergencyDiversionToWater
+                    ? "Fuel exhausted: steering for emergency water ditching"
+                    : "Target unaffordable: diverting to reachable dry land";
             if (!Telemetry.EngineRelightAvailable) return "No engine relight available";
             if (Telemetry.Twr <= 1) return "Landing TWR is below 1";
             if (Telemetry.FuelConservationActive)

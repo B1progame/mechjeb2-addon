@@ -58,6 +58,8 @@ namespace MuMech.AdvancedLanding
         public bool OrbitalReachable;
         public bool AutoWarpActive;
         public bool FuelConservationActive;
+        public bool EmergencyDiversionActive;
+        public bool EmergencyDiversionToWater;
         public bool TargetAheadOfImpact;
         public bool AirbrakesDeployed;
         public string WarpMode = "1x";
@@ -121,6 +123,8 @@ namespace MuMech.AdvancedLanding
             OrbitalReachable = false;
             AutoWarpActive = false;
             FuelConservationActive = false;
+            EmergencyDiversionActive = false;
+            EmergencyDiversionToWater = false;
             TargetAheadOfImpact = false;
             AirbrakesDeployed = false;
             WarpMode = "1x";
