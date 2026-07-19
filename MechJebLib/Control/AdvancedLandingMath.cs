@@ -172,14 +172,33 @@ namespace MechJebLib.Control
         }
 
         public static bool NormalEntryBurnUsefulForTarget(bool predictionReady,
-            double targetError, double targetRadius)
+            double targetError, double targetRadius, bool targetAheadOfImpact)
         {
             if (!predictionReady || double.IsNaN(targetError) || double.IsInfinity(targetError))
                 return true;
 
+            // Retrograde thrust shortens the trajectory. It can only help an overshoot;
+            // when the target is still ahead of impact it makes the undershoot worse.
+            if (targetAheadOfImpact) return false;
+
             // A retrograde entry burn is useful for energy management, but it must not
             // destroy an impact solution which the deorbit targeting already solved.
             return targetError > Max(2000, Max(0, targetRadius) * 20);
+        }
+
+        public static double EmergencyAerodynamicSearchRadius(double horizontalSpeed,
+            double timeToImpact, double altitude)
+        {
+            if (double.IsNaN(horizontalSpeed) || double.IsInfinity(horizontalSpeed) ||
+                double.IsNaN(timeToImpact) || double.IsInfinity(timeToImpact) ||
+                double.IsNaN(altitude) || double.IsInfinity(altitude))
+                return 0;
+
+            // This is deliberately an optimistic envelope, not a guaranteed cross-range.
+            // Unlike the former 10 km floor, it contracts to zero near touchdown.
+            return Min(350000, Max(0,
+                Max(0, horizontalSpeed) * Max(0, timeToImpact) * 0.35 +
+                Max(0, altitude) * 0.5));
         }
 
         public static bool EntryBurnTargetProtectionAllows(bool safetyRequired,

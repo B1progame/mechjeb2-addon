@@ -413,11 +413,13 @@ namespace MechJebLibTest.ControlTests
         public void NormalEntryBurnDoesNotDestroyPreciseDeorbitSolution()
         {
             Assert.False(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
-                true, 183, 50));
+                true, 183, 50, false));
             Assert.True(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
-                true, 40000, 50));
+                true, 40000, 50, false));
             Assert.True(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
-                false, double.NaN, 50));
+                false, double.NaN, 50, true));
+            Assert.False(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
+                true, 40000, 50, true));
         }
 
         [Fact]
@@ -429,6 +431,17 @@ namespace MechJebLibTest.ControlTests
                 false, true, 104000, 183, 50));
             Assert.True(AdvancedLandingMath.EntryBurnTargetProtectionAllows(
                 true, true, 104000, 183, 50));
+        }
+
+        [Fact]
+        public void EmergencySearchRadiusCollapsesNearTouchdown()
+        {
+            Assert.Equal(41.8, AdvancedLandingMath.EmergencyAerodynamicSearchRadius(
+                4, 2, 78), 6);
+            Assert.Equal(0, AdvancedLandingMath.EmergencyAerodynamicSearchRadius(
+                0, 0, 0), 6);
+            Assert.Equal(350000, AdvancedLandingMath.EmergencyAerodynamicSearchRadius(
+                2000, 500, 100000), 6);
         }
 
         [Fact]

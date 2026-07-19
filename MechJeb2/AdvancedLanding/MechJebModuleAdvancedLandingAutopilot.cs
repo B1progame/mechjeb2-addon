@@ -191,6 +191,8 @@ namespace MuMech
         private double _entryBurnBestTargetError = double.PositiveInfinity;
         private double _fuelEmptySince = double.NaN;
         private double _lastEmergencyDiversionSearch = double.NegativeInfinity;
+        private double _emergencyTargetLatitude = double.NaN;
+        private double _emergencyTargetLongitude = double.NaN;
         private CelestialBody _syncedTargetBody;
         private double _syncedTargetLatitude = double.NaN;
         private double _syncedTargetLongitude = double.NaN;
@@ -272,6 +274,8 @@ namespace MuMech
             _entryBurnBestTargetError = double.PositiveInfinity;
             _fuelEmptySince = double.NaN;
             _lastEmergencyDiversionSearch = double.NegativeInfinity;
+            _emergencyTargetLatitude = double.NaN;
+            _emergencyTargetLongitude = double.NaN;
             _landingPwm.Reset();
             ConfigureStabilizationHardware();
             SetPhase(AdvancedLandingPhase.Preflight);
@@ -483,15 +487,15 @@ namespace MuMech
                                          Telemetry.PredictionReady, Telemetry.TargetError, captureDeadband,
                                          Telemetry.TimeToImpact, targetCaptureTime, LandingBurnLead) &&
                                      (IgnoreFuelLimits || Telemetry.FuelMarginDeltaV > 0);
-            bool poweredDivertReachable = IsFinite(Telemetry.PoweredDivertDeltaV);
-
             // A powered descent is a one-way safety commitment. Returning to aerodynamic
-            // guidance caused throttle/attitude chatter during the failed flight. If the
-            // target is no longer reachable, immediately abandon lateral chase and reserve
-            // all control authority for a survivable vertical touchdown.
+            // guidance caused throttle/attitude chatter during the failed flight.
             if (_landingBurnCommitted)
             {
-                SetPhase(verticalBrakingUrgent || !poweredDivertReachable
+                // DriveLandingBurn already gives vertical braking priority whenever it is
+                // urgent or the divert is unreachable. Do not bounce between two controller
+                // tunings every prediction tick; commit to FinalDescent only in the terminal
+                // 150 m where its tighter speed and tilt limits are appropriate.
+                SetPhase(altitude < 150
                     ? AdvancedLandingPhase.FinalDescent
                     : AdvancedLandingPhase.LandingBurn);
                 return;
@@ -539,7 +543,8 @@ namespace MuMech
                 EntryBurnStartSpeed, Telemetry.FuelMarginDeltaV,
                 MaximumEntryBurnDeltaV, IgnoreFuelLimits) &&
                 AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
-                    Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius);
+                    Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius,
+                    Telemetry.TargetAheadOfImpact);
             if (MainBody.atmosphere && VesselState.AltitudeASL < atmosphereTop * 0.8 &&
                 (safetyEntryBurn || normalEntryBurn))
             {
@@ -943,15 +948,11 @@ namespace MuMech
                 corrected = (Cos(correctionAngle) * retrograde + Sin(correctionAngle) * lateral).normalized;
             }
 
-            // Trajectories' marker follows its configured AoA and may be prograde. A powered
-            // booster must keep its thrust axis on the retrograde hemisphere instead.
+            // CorrectedDirection is Trajectories' complete planned attitude plus its target
+            // correction. Blending it back toward retrograde made the flown AoA disagree with
+            // the simulated AoA, so a 138 m prediction drifted to a 142 km undershoot.
             if (ForceEngineFirstAttitude && Vector3d.Dot(corrected, retrograde) < 0) corrected = -corrected;
-            double correctionWeight = Clamp(
-                (Telemetry.TargetError - AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false)) /
-                Max(TargetRadius * 12, 600), 0.05, 0.80);
-            Vector3d attitude = ForceEngineFirstAttitude
-                ? ((1 - correctionWeight) * retrograde + correctionWeight * corrected).normalized
-                : corrected.normalized;
+            Vector3d attitude = corrected.normalized;
             bool highAerodynamicLoad = VesselState.DynamicPressure > 10000;
             double maxTilt = VesselState.AltitudeASL < 10000
                 ? FastHorizontalTransfer && !highAerodynamicLoad ? 40 : 25
@@ -1200,19 +1201,21 @@ namespace MuMech
         {
             if (!UseTrajectories || !_trajectories.Available || !Core.Target.PositionTargetExists) return;
 
-            double altitude = MainBody.TerrainAltitude(Core.Target.targetLatitude, Core.Target.targetLongitude);
+            double latitude = GuidanceTargetLatitude();
+            double longitude = GuidanceTargetLongitude();
+            double altitude = MainBody.TerrainAltitude(latitude, longitude);
             bool changed = _syncedTargetBody != MainBody ||
                            !IsFinite(_syncedTargetLatitude) ||
-                           Abs(_syncedTargetLatitude - Core.Target.targetLatitude) > 1e-7 ||
-                           Abs(_syncedTargetLongitude - Core.Target.targetLongitude) > 1e-7 ||
+                           Abs(_syncedTargetLatitude - latitude) > 1e-7 ||
+                           Abs(_syncedTargetLongitude - longitude) > 1e-7 ||
                            Abs(_syncedTargetAltitude - altitude) > 0.1;
             if (!force && !changed) return;
             if (!force && VesselState.Time - _lastTargetSync < 2) return;
 
-            _trajectories.SetTarget(Core.Target.targetLatitude, Core.Target.targetLongitude, altitude);
+            _trajectories.SetTarget(latitude, longitude, altitude);
             _syncedTargetBody = MainBody;
-            _syncedTargetLatitude = Core.Target.targetLatitude;
-            _syncedTargetLongitude = Core.Target.targetLongitude;
+            _syncedTargetLatitude = latitude;
+            _syncedTargetLongitude = longitude;
             _syncedTargetAltitude = altitude;
             _lastTargetSync = VesselState.Time;
         }
@@ -1247,31 +1250,38 @@ namespace MuMech
             if (Telemetry.EmergencyDiversionActive &&
                 (Telemetry.EmergencyDiversionToWater || !empty))
                 return false;
+            // Once powered landing is committed, there is no time to chase a newly sampled
+            // shoreline. Keep the last reachable target and spend all authority on touchdown.
+            if (_landingBurnCommitted || Telemetry.RadarAltitude < 2000) return false;
             if (VesselState.Time - _lastEmergencyDiversionSearch < 10) return false;
 
             _lastEmergencyDiversionSearch = VesselState.Time;
             double predictedTerrain = MainBody.TerrainAltitude(
                 Telemetry.PredictedLatitude, Telemetry.PredictedLongitude, true);
             double timeToImpact = IsFinite(Telemetry.TimeToImpact) ? Max(0, Telemetry.TimeToImpact) : 0;
-            double reachableRadius = Clamp(
-                VesselState.SpeedSurfaceHorizontal * timeToImpact * 0.35 +
-                Max(0, VesselState.AltitudeASL) * 0.5, 10000, 350000);
+            double reachableRadius = AdvancedLandingMath.EmergencyAerodynamicSearchRadius(
+                VesselState.SpeedSurfaceHorizontal, timeToImpact, VesselState.AltitudeASL);
             bool seekLand = !empty;
             bool impactAlreadySuitable = seekLand ? predictedTerrain > 1 : predictedTerrain <= 1;
             double latitude = Telemetry.PredictedLatitude;
             double longitude = Telemetry.PredictedLongitude;
             double distance = 0;
-            if (!impactAlreadySuitable &&
-                !TryFindNearestSurfaceType(Telemetry.PredictedLatitude, Telemetry.PredictedLongitude,
-                    reachableRadius, seekLand, out latitude, out longitude, out distance))
+            if (!impactAlreadySuitable)
             {
-                if (DebugLogging)
-                    Print($"[AdvancedLanding] emergency {(seekLand ? "land" : "water")} search found no " +
-                          $"suitable surface within {reachableRadius:F0}m");
-                return false;
+                if (reachableRadius < 500 ||
+                    !TryFindNearestSurfaceType(Telemetry.PredictedLatitude, Telemetry.PredictedLongitude,
+                        reachableRadius, seekLand, out latitude, out longitude, out distance))
+                {
+                    if (DebugLogging)
+                        Print($"[AdvancedLanding] emergency {(seekLand ? "land" : "water")} search found no " +
+                              $"suitable surface within {reachableRadius:F0}m");
+                    return false;
+                }
             }
 
             Core.Target.SetPositionTarget(MainBody, latitude, longitude);
+            _emergencyTargetLatitude = latitude;
+            _emergencyTargetLongitude = longitude;
             Telemetry.EmergencyDiversionActive = true;
             Telemetry.EmergencyDiversionToWater = !seekLand;
             SynchronizeTarget(true);
@@ -1727,9 +1737,21 @@ namespace MuMech
 
         private Vector3d TargetRelativePosition()
         {
-            double altitude = MainBody.TerrainAltitude(Core.Target.targetLatitude, Core.Target.targetLongitude);
-            return MainBody.GetWorldSurfacePosition(Core.Target.targetLatitude, Core.Target.targetLongitude, altitude) - MainBody.position;
+            double latitude = GuidanceTargetLatitude();
+            double longitude = GuidanceTargetLongitude();
+            double altitude = MainBody.TerrainAltitude(latitude, longitude);
+            return MainBody.GetWorldSurfacePosition(latitude, longitude, altitude) - MainBody.position;
         }
+
+        private double GuidanceTargetLatitude() =>
+            Telemetry.EmergencyDiversionActive && IsFinite(_emergencyTargetLatitude)
+                ? _emergencyTargetLatitude
+                : (double)Core.Target.targetLatitude;
+
+        private double GuidanceTargetLongitude() =>
+            Telemetry.EmergencyDiversionActive && IsFinite(_emergencyTargetLongitude)
+                ? _emergencyTargetLongitude
+                : (double)Core.Target.targetLongitude;
 
         private static double SurfaceDistance(Vector3d a, Vector3d b)
         {
@@ -1866,7 +1888,9 @@ namespace MuMech
                   $"entryBurnSpent={Telemetry.EntryBurnDeltaVSpent:F1}m/s " +
                   $"ignoreFuel={IgnoreFuelLimits} twr={Telemetry.Twr:F2} " +
                   $"p={Telemetry.Probability:F0}% upperRcs={Telemetry.UpperRcsModules} finsNoRoll={Telemetry.RollSuppressedSurfaces} " +
-                  $"impact={Telemetry.PredictedLatitude:F5},{Telemetry.PredictedLongitude:F5}");
+                  $"impact={Telemetry.PredictedLatitude:F5},{Telemetry.PredictedLongitude:F5} " +
+                  $"guidanceTarget={GuidanceTargetLatitude():F5},{GuidanceTargetLongitude():F5} " +
+                  $"emergency={Telemetry.EmergencyDiversionActive}/water={Telemetry.EmergencyDiversionToWater}");
         }
 
         private void DrawDebugOverlay()
@@ -1882,7 +1906,8 @@ namespace MuMech
             if (IsFinite(Telemetry.DeorbitAimLatitude) && IsFinite(Telemetry.DeorbitAimLongitude))
                 GLUtils.DrawGroundMarker(MainBody, Telemetry.DeorbitAimLatitude,
                     Telemetry.DeorbitAimLongitude, new Color(1.0f, 0.45f, 0.0f), true, 0, 80);
-            GLUtils.DrawGroundMarker(MainBody, Core.Target.targetLatitude, Core.Target.targetLongitude, Color.cyan, true, (float)TargetRadius);
+            GLUtils.DrawGroundMarker(MainBody, GuidanceTargetLatitude(), GuidanceTargetLongitude(),
+                Color.cyan, true, (float)TargetRadius);
         }
     }
 }
