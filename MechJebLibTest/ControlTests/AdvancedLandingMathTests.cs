@@ -172,6 +172,26 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void PrecisionTransferDoesNotDemandSixtyMetersPerSecondForNearbyPad()
+        {
+            // KSP.log 14:24:15: roughly 150 m from the target with about
+            // 13 seconds remaining. The old controller demanded 52.2 m/s.
+            double speed = AdvancedLandingMath.PrecisionHorizontalSpeed(
+                150, 5, 13, 115, 15, 1.8);
+
+            Assert.InRange(speed, 13, 14);
+        }
+
+        [Fact]
+        public void PrecisionTransferRetainsFastLongRangeAuthority()
+        {
+            double speed = AdvancedLandingMath.PrecisionHorizontalSpeed(
+                10000, 5, 100, 120, 15, 1.8);
+
+            Assert.InRange(speed, 119, 120);
+        }
+
+        [Fact]
         public void EntryPhysicsWarpCanAdvanceBeyondTwoWhenTimeAllows()
         {
             Assert.Equal(4, AdvancedLandingMath.EntryPhysicsWarpRate(120, 12, 4), 8);

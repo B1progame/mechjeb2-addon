@@ -991,7 +991,12 @@ namespace MuMech
                 double predictionWeight = final
                     ? Clamp(altitude / 300, 0.05, 0.50)
                     : 0.80;
-                effectiveHorizontalError += predictionWeight * predictedImpactError;
+                // Blend the present position error with the predicted impact error.
+                // Adding both vectors double-counted the same miss and commanded
+                // 52-68 m/s sideways for a target only ~150 m away.
+                effectiveHorizontalError =
+                    (1 - predictionWeight) * horizontalError +
+                    predictionWeight * predictedImpactError;
             }
             if (Telemetry.FuelConservationActive)
                 effectiveHorizontalError = Vector3d.zero;
@@ -1023,7 +1028,7 @@ namespace MuMech
                     ? Min(Max(20, MaximumHorizontalTransferSpeed), Max(15, altitude / 12))
                     : Min(45, Max(8, altitude / 25));
             double desiredHorizontalSpeed = FastHorizontalTransfer && !final
-                ? AdvancedLandingMath.BrakingLimitedHorizontalSpeed(
+                ? AdvancedLandingMath.PrecisionHorizontalSpeed(
                     effectiveRange, aimDeadband, timeToGo, maximumHorizontalSpeed,
                     maxLateral, HorizontalTransferGain)
                 : AdvancedLandingMath.DesiredHorizontalSpeed(

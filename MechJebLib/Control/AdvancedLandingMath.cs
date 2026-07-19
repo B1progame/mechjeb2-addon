@@ -251,6 +251,17 @@ namespace MechJebLib.Control
             return Min(maximumSpeed, Min(trackingSpeed, brakingSpeed));
         }
 
+        public static double PrecisionHorizontalSpeed(double missDistance, double targetRadius,
+            double timeToGo, double maximumSpeed, double lateralAcceleration, double aggressiveness)
+        {
+            double positionLimited = DesiredHorizontalSpeed(
+                missDistance, targetRadius, timeToGo, maximumSpeed);
+            double brakingLimited = BrakingLimitedHorizontalSpeed(
+                missDistance, targetRadius, timeToGo, maximumSpeed,
+                lateralAcceleration, aggressiveness);
+            return Min(positionLimited, brakingLimited);
+        }
+
         public static double PrecisionAimDeadband(double targetRadius, bool finalDescent)
         {
             double radius = Max(0.1, targetRadius);
