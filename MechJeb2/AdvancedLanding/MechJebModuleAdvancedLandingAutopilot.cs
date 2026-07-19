@@ -184,6 +184,8 @@ namespace MuMech
         private bool _entryBurnCompleted;
         private double _entryBurnStartAvailableDeltaV;
         private double _entryBurnStartTime;
+        private double _entryBurnIntegratedDeltaV;
+        private double _entryBurnBestTargetError = double.PositiveInfinity;
         private CelestialBody _syncedTargetBody;
         private double _syncedTargetLatitude = double.NaN;
         private double _syncedTargetLongitude = double.NaN;
@@ -261,6 +263,8 @@ namespace MuMech
             _entryBurnCompleted = false;
             _entryBurnStartAvailableDeltaV = 0;
             _entryBurnStartTime = 0;
+            _entryBurnIntegratedDeltaV = 0;
+            _entryBurnBestTargetError = double.PositiveInfinity;
             _landingPwm.Reset();
             ConfigureStabilizationHardware();
             SetPhase(AdvancedLandingPhase.Preflight);
@@ -501,12 +505,19 @@ namespace MuMech
                                    MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.8;
             if (Telemetry.Phase == AdvancedLandingPhase.EntryBurn)
             {
-                double spentDeltaV = Max(0, _entryBurnStartAvailableDeltaV - Telemetry.AvailableDeltaV);
+                double fuelMeasuredDeltaV = Max(0, _entryBurnStartAvailableDeltaV - Telemetry.AvailableDeltaV);
+                double spentDeltaV = Max(fuelMeasuredDeltaV, _entryBurnIntegratedDeltaV);
                 double elapsed = Max(0, VesselState.Time - _entryBurnStartTime);
                 Telemetry.EntryBurnDeltaVSpent = spentDeltaV;
+                if (Telemetry.PredictionReady && IsFinite(Telemetry.TargetError))
+                    _entryBurnBestTargetError = Min(_entryBurnBestTargetError, Telemetry.TargetError);
+                bool targetProtected = AdvancedLandingMath.EntryBurnTargetProtectionAllows(
+                    safetyEntryBurn, Telemetry.PredictionReady, Telemetry.TargetError,
+                    _entryBurnBestTargetError, TargetRadius);
                 if (AdvancedLandingMath.EntryBurnShouldContinue(
                         safetyEntryBurn, speed, EntryBurnTargetSpeed, spentDeltaV,
-                        MaximumEntryBurnDeltaV, elapsed, MaximumEntryBurnDuration))
+                        MaximumEntryBurnDeltaV, elapsed, MaximumEntryBurnDuration) &&
+                    targetProtected)
                 {
                     SetPhase(AdvancedLandingPhase.EntryBurn);
                     return;
@@ -518,7 +529,9 @@ namespace MuMech
             bool normalEntryBurn = AdvancedLandingMath.NormalEntryBurnShouldStart(
                 _entryBurnCompleted, Telemetry.FuelConservationActive, speed,
                 EntryBurnStartSpeed, Telemetry.FuelMarginDeltaV,
-                MaximumEntryBurnDeltaV, IgnoreFuelLimits);
+                MaximumEntryBurnDeltaV, IgnoreFuelLimits) &&
+                AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
+                    Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius);
             if (MainBody.atmosphere && VesselState.AltitudeASL < atmosphereTop * 0.8 &&
                 (safetyEntryBurn || normalEntryBurn))
             {
@@ -898,6 +911,8 @@ namespace MuMech
             double speedDemand = Clamp01((VesselState.SurfaceVelocity.magnitude - 700) / 800);
             double throttle = Max(0.15, Max(speedDemand, Max(heatDemand, gDemand)));
             if (attitudeError > 25) throttle = Min(throttle, 0.15);
+            _entryBurnIntegratedDeltaV += Max(0, VesselState.LimitedMaxThrustAcceleration) *
+                                          throttle * TimeWarp.fixedDeltaTime;
             Telemetry.CommandedThrottle = throttle;
             Core.Thrust.RequestActiveThrottle((float)throttle, allowZero: true);
             SetAirbrakes(true);
@@ -1613,6 +1628,10 @@ namespace MuMech
             {
                 _entryBurnStartAvailableDeltaV = Telemetry.AvailableDeltaV;
                 _entryBurnStartTime = VesselState.Time;
+                _entryBurnIntegratedDeltaV = 0;
+                _entryBurnBestTargetError = Telemetry.PredictionReady && IsFinite(Telemetry.TargetError)
+                    ? Telemetry.TargetError
+                    : double.PositiveInfinity;
                 Telemetry.EntryBurnDeltaVSpent = 0;
             }
             if (phase == AdvancedLandingPhase.DeorbitBurn || phase == AdvancedLandingPhase.Boostback || phase == AdvancedLandingPhase.EntryBurn ||

@@ -171,6 +171,33 @@ namespace MechJebLib.Control
                    elapsedTime < Max(0, maximumDuration);
         }
 
+        public static bool NormalEntryBurnUsefulForTarget(bool predictionReady,
+            double targetError, double targetRadius)
+        {
+            if (!predictionReady || double.IsNaN(targetError) || double.IsInfinity(targetError))
+                return true;
+
+            // A retrograde entry burn is useful for energy management, but it must not
+            // destroy an impact solution which the deorbit targeting already solved.
+            return targetError > Max(2000, Max(0, targetRadius) * 20);
+        }
+
+        public static bool EntryBurnTargetProtectionAllows(bool safetyRequired,
+            bool predictionReady, double targetError, double bestTargetError,
+            double targetRadius)
+        {
+            if (safetyRequired || !predictionReady ||
+                double.IsNaN(targetError) || double.IsInfinity(targetError) ||
+                double.IsNaN(bestTargetError) || double.IsInfinity(bestTargetError))
+                return true;
+
+            // Prediction noise can be hundreds of metres during entry. A kilometre-scale
+            // allowance avoids chatter while stopping a burn long before it creates the
+            // hundred-kilometre downrange errors seen in flight logs.
+            double allowedRegression = Max(1000, Max(0, targetRadius) * 20);
+            return targetError <= bestTargetError + allowedRegression;
+        }
+
         public static double VerticalThrottle(double altitude, double verticalSpeed, double targetTouchdownSpeed,
             double gravity, double minThrustAcceleration, double maxThrustAcceleration)
         {

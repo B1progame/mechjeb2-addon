@@ -410,6 +410,28 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void NormalEntryBurnDoesNotDestroyPreciseDeorbitSolution()
+        {
+            Assert.False(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
+                true, 183, 50));
+            Assert.True(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
+                true, 40000, 50));
+            Assert.True(AdvancedLandingMath.NormalEntryBurnUsefulForTarget(
+                false, double.NaN, 50));
+        }
+
+        [Fact]
+        public void EntryBurnStopsWhenPredictedImpactRegresses()
+        {
+            Assert.True(AdvancedLandingMath.EntryBurnTargetProtectionAllows(
+                false, true, 900, 183, 50));
+            Assert.False(AdvancedLandingMath.EntryBurnTargetProtectionAllows(
+                false, true, 104000, 183, 50));
+            Assert.True(AdvancedLandingMath.EntryBurnTargetProtectionAllows(
+                true, true, 104000, 183, 50));
+        }
+
+        [Fact]
         public void PoweredDivertIncludesTranslationAndGravityLoss()
         {
             double near = AdvancedLandingMath.PoweredDivertDeltaV(
