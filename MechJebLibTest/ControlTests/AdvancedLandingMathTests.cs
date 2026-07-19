@@ -203,6 +203,23 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void AtmosphericCaptureUsesBallisticDeorbitOnlyOnAtmosphericBodies()
+        {
+            Assert.True(AdvancedLandingMath.UseBallisticAtmosphericDeorbit(true, true));
+            Assert.False(AdvancedLandingMath.UseBallisticAtmosphericDeorbit(false, true));
+            Assert.False(AdvancedLandingMath.UseBallisticAtmosphericDeorbit(true, false));
+        }
+
+        [Fact]
+        public void BallisticDeorbitRunsToNearlyTheRequestedPeriapsis()
+        {
+            Assert.False(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-30000, 600000));
+            Assert.False(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-56999, 600000));
+            Assert.True(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-57000, 600000));
+            Assert.True(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-60000, 600000));
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);

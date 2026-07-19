@@ -508,10 +508,17 @@ namespace MuMech
                 Vector3d currentRadial = VesselState.CoM - MainBody.position;
                 double targetToNormal = Vector3d.Angle(Orbit.OrbitNormal(), targetAtImpact);
                 targetToNormal = Min(targetToNormal, 180 - targetToNormal);
+                bool ballisticAtmosphericDeorbit = AdvancedLandingMath.UseBallisticAtmosphericDeorbit(
+                    AtmosphericCaptureOnly, MainBody.atmosphere);
 
                 solution = new DeorbitSolution
                 {
-                    DeltaV = desiredHorizontalVelocity - horizontalVelocity,
+                    // Atmospheric capture uses the aim point to choose when to deorbit,
+                    // but keeps the burn purely retrograde/periapsis-lowering. The lateral
+                    // curve back to the real target is intentionally deferred until entry.
+                    DeltaV = ballisticAtmosphericDeorbit
+                        ? horizontalDeltaV
+                        : desiredHorizontalVelocity - horizontalVelocity,
                     BaseDeorbitDeltaV = horizontalDeltaV.magnitude,
                     FreefallTime = freefallTime,
                     TargetAheadAngle = Vector3d.Angle(currentRadial, targetAtImpact),
@@ -611,7 +618,12 @@ namespace MuMech
             }
 
             Telemetry.DeorbitDeltaV = solution.DeltaV.magnitude;
-            if (solution.DeltaV.magnitude < 2 || Orbit.PeA < -0.05 * MainBody.Radius)
+            bool ballisticAtmosphericDeorbit = AdvancedLandingMath.UseBallisticAtmosphericDeorbit(
+                AtmosphericCaptureOnly, MainBody.atmosphere);
+            bool periapsisEstablished = ballisticAtmosphericDeorbit
+                ? AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(Orbit.PeA, MainBody.Radius)
+                : Orbit.PeA < -0.05 * MainBody.Radius;
+            if (solution.DeltaV.magnitude < 2 || periapsisEstablished)
             {
                 Core.Thrust.RequestActiveThrottle(0);
                 _deorbitBurnCommitted = false;

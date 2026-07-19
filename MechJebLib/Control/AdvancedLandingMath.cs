@@ -194,6 +194,17 @@ namespace MechJebLib.Control
             return !atmosphericCaptureOnly || !bodyHasAtmosphere || altitudeAsl < atmosphereTop;
         }
 
+        public static bool UseBallisticAtmosphericDeorbit(bool atmosphericCaptureOnly, bool bodyHasAtmosphere) =>
+            atmosphericCaptureOnly && bodyHasAtmosphere;
+
+        public static bool AtmosphericDeorbitPeriapsisEstablished(double periapsisAltitude, double bodyRadius)
+        {
+            if (bodyRadius <= 0) return false;
+            // The solver targets -10% of body radius. Stop inside a 0.5%-radius
+            // tolerance instead of the old -5% cutoff, which ended the burn halfway.
+            return periapsisAltitude <= -0.095 * bodyRadius;
+        }
+
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,
             double targetRadius, double heatRatio, double gLoad, double maxG, bool engineRelightAvailable, bool predictionReady)
         {
