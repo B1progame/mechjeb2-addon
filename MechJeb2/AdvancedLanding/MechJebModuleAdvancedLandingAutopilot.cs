@@ -104,7 +104,7 @@ namespace MuMech
         public readonly EditableDouble EntryOvershootDistance = 5000;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
-        public readonly EditableDoubleMult AtmosphericPeriapsisRatio = new EditableDoubleMult(0.50, 0.01);
+        public readonly EditableDoubleMult AtmosphericPeriapsisRatio = new EditableDoubleMult(0.90, 0.01);
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDoubleMult AtmosphericCaptureStartRatio = new EditableDoubleMult(0.55, 0.01);
@@ -492,16 +492,24 @@ namespace MuMech
             if (_landingBurnCommitted)
             {
                 // DriveLandingBurn already gives vertical braking priority whenever it is
-                // urgent or the divert is unreachable. Do not bounce between two controller
+                // physically urgent. Do not bounce between two controller
                 // tunings every prediction tick; commit to FinalDescent only in the terminal
-                // 150 m where its tighter speed and tilt limits are appropriate.
-                SetPhase(altitude < 150
+                // Use a speed-dependent transition instead of waiting until 150 m.
+                // The three logged flights entered the old terminal phase at
+                // 20-31 m/s and could not settle to the configured touchdown speed.
+                double finalDescentAltitude = AdvancedLandingMath.FinalDescentTransitionAltitude(
+                    Max(0, -VesselState.SpeedVertical), FinalDescentSpeedLimit,
+                    VesselState.MaxEngineResponseTime);
+                SetPhase(altitude < finalDescentAltitude
                     ? AdvancedLandingPhase.FinalDescent
                     : AdvancedLandingPhase.LandingBurn);
                 return;
             }
 
-            if (altitude < 150)
+            double terminalAltitude = AdvancedLandingMath.FinalDescentTransitionAltitude(
+                Max(0, -VesselState.SpeedVertical), FinalDescentSpeedLimit,
+                VesselState.MaxEngineResponseTime);
+            if (altitude < terminalAltitude)
             {
                 SetPhase(AdvancedLandingPhase.FinalDescent);
                 return;
@@ -634,7 +642,12 @@ namespace MuMech
                     AtmosphericCaptureOnly, MainBody.atmosphere);
                 double periapsisTarget = ballisticAtmosphericDeorbit
                     ? AdvancedLandingMath.AtmosphericDeorbitPeriapsisAltitude(
-                        MainBody.RealMaxAtmosphereAltitude(), AtmosphericPeriapsisRatio)
+                        MainBody.RealMaxAtmosphereAltitude(),
+                        // A deep first cut cannot be undone. The logged 35 km Kerbin
+                        // periapsis produced a 429 km undershoot before guidance even
+                        // began. Enter shallow, obtain a live atmospheric prediction,
+                        // then trim retrograde if the impact still lies beyond the aim.
+                        Max(0.90, AtmosphericPeriapsisRatio))
                     : -0.10 * MainBody.Radius;
                 Vector3d horizontalDeltaV = OrbitalManeuverCalculator.DeltaVToChangePeriapsis(
                     Orbit, VesselState.Time, MainBody.Radius + periapsisTarget);
@@ -823,12 +836,19 @@ namespace MuMech
             bool aimCaptured = predictorAimAvailable && Telemetry.DeorbitAimError <= captureTolerance;
             bool aimPassed = predictorAimAvailable && AdvancedLandingMath.DeorbitAimPassed(
                 _bestDeorbitAimError, Telemetry.DeorbitAimError, captureTolerance);
+            bool predictionNeedsMoreRetrograde = predictorAimAvailable &&
+                                                 !Telemetry.TargetAheadOfImpact &&
+                                                 !aimCaptured && !aimPassed;
             bool periapsisEstablished = ballisticAtmosphericDeorbit
                 ? AdvancedLandingMath.DeorbitPeriapsisEstablished(
                     Orbit.PeA, solution.PeriapsisTarget,
                     Max(500, 0.02 * MainBody.RealMaxAtmosphereAltitude()))
                 : Orbit.PeA < -0.05 * MainBody.Radius;
-            if (solution.DeltaV.magnitude < 2 || periapsisEstablished || aimCaptured || aimPassed)
+            bool predictionSaysStop = predictorAimAvailable &&
+                                      (Telemetry.TargetAheadOfImpact || aimCaptured || aimPassed);
+            bool openLoopComplete = !predictorAimAvailable &&
+                                    (solution.DeltaV.magnitude < 2 || periapsisEstablished);
+            if (predictionSaysStop || openLoopComplete)
             {
                 RequestCoastThrottle();
                 _deorbitBurnCommitted = false;
@@ -836,7 +856,10 @@ namespace MuMech
             }
 
             PrepareLandingEngines();
-            Core.Attitude.attitudeTo(solution.DeltaV.normalized, AttitudeReference.INERTIAL, this);
+            Vector3d burnDirection = predictionNeedsMoreRetrograde
+                ? -Vector3d.Exclude(VesselState.Up, VesselState.OrbitalVelocity).normalized
+                : solution.DeltaV.normalized;
+            Core.Attitude.attitudeTo(burnDirection, AttitudeReference.INERTIAL, this);
             Core.Attitude.SetOmegaTarget(roll: 0);
             Telemetry.AttitudeError = Core.Attitude.attitudeAngleFromTarget();
             float throttle = Telemetry.AttitudeError < 5
@@ -938,20 +961,29 @@ namespace MuMech
             Vector3d retrograde = VesselState.SurfaceVelocity.sqrMagnitude > 1
                 ? -VesselState.SurfaceVelocity.normalized
                 : VesselState.Up;
-            Vector3d corrected = Telemetry.CorrectedDirection;
-            if (corrected.sqrMagnitude < 0.01)
+            Vector3d corrected;
+            if (ForceEngineFirstAttitude)
             {
-                Vector3d targetDelta = TargetRelativePosition() - Telemetry.PredictedImpact;
-                Vector3d lateral = Vector3d.Exclude(VesselState.Up, targetDelta).normalized;
+                // Trajectories CorrectedDirection describes the orientation used by
+                // its descent profile. Applying it directly to a thrust-axis attitude
+                // controller is ambiguous for engine-first craft and, in the orbital
+                // run, drove the predicted impact through 360 degrees of longitude.
+                // Keep a stable retrograde base and use only bounded closed-loop
+                // cross-range correction toward the selected target.
+                Vector3d lateral = SurfaceTangentDirection(
+                    Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
                 double aimDeadband = AdvancedLandingMath.PrecisionAimDeadband(TargetRadius, false);
                 double correctionAngle = Clamp((Telemetry.TargetError - aimDeadband) / 750, 0, 25) * PI / 180.0;
-                corrected = (Cos(correctionAngle) * retrograde + Sin(correctionAngle) * lateral).normalized;
+                corrected = lateral.sqrMagnitude > 0.01
+                    ? (Cos(correctionAngle) * retrograde + Sin(correctionAngle) * lateral).normalized
+                    : retrograde;
             }
-
-            // CorrectedDirection is Trajectories' complete planned attitude plus its target
-            // correction. Blending it back toward retrograde made the flown AoA disagree with
-            // the simulated AoA, so a 138 m prediction drifted to a 142 km undershoot.
-            if (ForceEngineFirstAttitude && Vector3d.Dot(corrected, retrograde) < 0) corrected = -corrected;
+            else
+            {
+                corrected = Telemetry.CorrectedDirection.sqrMagnitude > 0.01
+                    ? Telemetry.CorrectedDirection
+                    : retrograde;
+            }
             Vector3d attitude = corrected.normalized;
             bool highAerodynamicLoad = VesselState.DynamicPressure > 10000;
             double maxTilt = VesselState.AltitudeASL < 10000
@@ -965,8 +997,8 @@ namespace MuMech
             if (UseRCS && Telemetry.PredictionReady &&
                 (!Telemetry.FuelConservationActive || emergencyFinalCorrection))
             {
-                Vector3d predictedImpactError = Vector3d.Exclude(
-                    VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
+                Vector3d predictedImpactError = SurfaceTangentError(
+                    Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
                 double correctionTime = IsFinite(Telemetry.TimeToImpact) && Telemetry.TimeToImpact > 0
                     ? Max(5, Telemetry.TimeToImpact)
                     : 10;
@@ -1014,11 +1046,11 @@ namespace MuMech
             Vector3d effectiveHorizontalError = horizontalError;
             if (Telemetry.PredictionReady && Telemetry.PredictedImpact.sqrMagnitude > 1)
             {
-                Vector3d predictedImpactError = Vector3d.Exclude(
-                    VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
+                Vector3d predictedImpactError = SurfaceTangentError(
+                    Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
                 double predictionWeight = final
-                    ? Clamp(altitude / 300, 0.05, 0.50)
-                    : 0.80;
+                    ? Clamp(altitude / 600, 0.05, 0.35)
+                    : Clamp(altitude / 3000, 0.15, 0.80);
                 // Blend the present position error with the predicted impact error.
                 // Adding both vectors double-counted the same miss and commanded
                 // 52-68 m/s sideways for a target only ~150 m away.
@@ -1034,9 +1066,9 @@ namespace MuMech
             double stoppingDistance = AdvancedLandingMath.StoppingDistance(
                 Max(0, -VesselState.SpeedVertical), projectedThrustAcceleration,
                 VesselState.GravityForce.magnitude, VesselState.MaxEngineResponseTime, SafetyFactor());
-            bool verticalPriority = final ||
-                                    !IsFinite(Telemetry.PoweredDivertDeltaV) ||
-                                    AdvancedLandingMath.VerticalBrakingUrgent(
+            bool verticalPriority =
+                altitude <= Max(10, HoverCaptureAltitude) ||
+                AdvancedLandingMath.VerticalBrakingUrgent(
                                         altitude, stoppingDistance, Max(0, -VesselState.SpeedVertical),
                                         Max(2, LandingBurnLead));
             if (verticalPriority)
@@ -1396,11 +1428,11 @@ namespace MuMech
             if (Telemetry.PredictionReady)
             {
                 Telemetry.TargetError = SurfaceDistance(Telemetry.PredictedImpact, TargetRelativePosition());
-                Vector3d targetFromImpact = Vector3d.Exclude(
-                    VesselState.Up, TargetRelativePosition() - Telemetry.PredictedImpact);
+                Vector3d targetFromImpact = SurfaceTangentDirection(
+                    Telemetry.PredictedImpact, TargetRelativePosition(), VesselState.Up);
                 Vector3d horizontalVelocity = Vector3d.Exclude(
                     VesselState.Up, VesselState.SurfaceVelocity);
-                Telemetry.TargetAheadOfImpact = targetFromImpact.sqrMagnitude > 1 &&
+                Telemetry.TargetAheadOfImpact = targetFromImpact.sqrMagnitude > 1e-8 &&
                                                 horizontalVelocity.sqrMagnitude > 1 &&
                                                 Vector3d.Dot(targetFromImpact, horizontalVelocity) > 0;
             }
@@ -1758,6 +1790,29 @@ namespace MuMech
             if (a.sqrMagnitude <= 0 || b.sqrMagnitude <= 0) return double.NaN;
             double angle = SafeAcos(Clamp(Vector3d.Dot(a.normalized, b.normalized), -1, 1));
             return angle * (a.magnitude + b.magnitude) * 0.5;
+        }
+
+        private static Vector3d SurfaceTangentDirection(Vector3d from, Vector3d to, Vector3d localUp)
+        {
+            if (from.sqrMagnitude <= 0 || to.sqrMagnitude <= 0 || localUp.sqrMagnitude <= 0)
+                return Vector3d.zero;
+
+            Vector3d fromUp = from.normalized;
+            Vector3d tangentAtFrom = Vector3d.Exclude(fromUp, to.normalized);
+            if (tangentAtFrom.sqrMagnitude <= 1e-12) return Vector3d.zero;
+
+            Vector3d up = localUp.normalized;
+            Vector3d transported = MathExtensions.FromToRotation(fromUp, up) * tangentAtFrom.normalized;
+            return Vector3d.Exclude(up, transported).normalized;
+        }
+
+        private static Vector3d SurfaceTangentError(Vector3d from, Vector3d to, Vector3d localUp)
+        {
+            Vector3d direction = SurfaceTangentDirection(from, to, localUp);
+            double distance = SurfaceDistance(from, to);
+            return direction.sqrMagnitude > 0 && IsFinite(distance)
+                ? direction * distance
+                : Vector3d.zero;
         }
 
         private void SetPhase(AdvancedLandingPhase phase)

@@ -243,12 +243,28 @@ namespace MechJebLib.Control
             // Follow a progressively shallower flare curve. At high altitude the
             // speed is capped; close to the surface it converges continuously on
             // the configured touchdown speed.
-            double flareAcceleration = 0.35 * g;
+            // A 0.35 g flare curve still requested roughly 8-12 m/s in the last
+            // 10-30 m. With engine response and minimum-throttle pulsing that left
+            // too little time to reach a sub-2 m/s touchdown. Start shaping the
+            // descent earlier and converge more gently.
+            double flareAcceleration = 0.12 * g;
             double desiredVerticalSpeed = -Min(descentLimit,
                 Sqrt(touchdownSpeed * touchdownSpeed + 2 * flareAcceleration * predictedAltitude));
             double timeConstant = Min(2.0, Max(0.25,
                 0.35 * Sqrt(2 * predictedAltitude / g)));
             return Max(0, g + (desiredVerticalSpeed - predictedVerticalSpeed) / timeConstant);
+        }
+
+        public static double FinalDescentTransitionAltitude(double downwardSpeed,
+            double maximumDescentSpeed, double engineResponseTime)
+        {
+            double speed = Max(Abs(downwardSpeed), Abs(maximumDescentSpeed));
+            double responseDistance = Max(0, downwardSpeed) * Max(0, engineResponseTime);
+
+            // Six seconds of vertical-speed shaping plus engine response gives the
+            // flare controller time to settle without turning the whole powered
+            // descent into a slow hover.
+            return Min(1200, Max(300, 6 * speed + responseDistance));
         }
 
         public static double LimitEarlyAscentAcceleration(double commandedAcceleration, double altitude,

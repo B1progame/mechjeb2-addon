@@ -86,6 +86,26 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void TerminalDescentStartsEarlierForFastApproach()
+        {
+            Assert.Equal(300, AdvancedLandingMath.FinalDescentTransitionAltitude(
+                25, 12, 0), 8);
+            Assert.Equal(810, AdvancedLandingMath.FinalDescentTransitionAltitude(
+                135, 12, 0), 8);
+            Assert.Equal(1200, AdvancedLandingMath.FinalDescentTransitionAltitude(
+                300, 12, 1), 8);
+        }
+
+        [Fact]
+        public void GentlerFlareCommandsEarlyBrakingNearGround()
+        {
+            double command = AdvancedLandingMath.VerticalAccelerationCommand(
+                10, -8, 0.5, 9.81, 0, 12);
+
+            Assert.True(command > 9.81);
+        }
+
+        [Fact]
         public void EarlyAscentGovernorCutsClimbAboveHoverZone()
         {
             Assert.Equal(0, AdvancedLandingMath.LimitEarlyAscentAcceleration(
