@@ -59,6 +59,7 @@ namespace MuMech.AdvancedLanding
         public bool AutoWarpActive;
         public bool FuelConservationActive;
         public bool TargetAheadOfImpact;
+        public bool AirbrakesDeployed;
         public string WarpMode = "1x";
         public double WarpRate = 1;
         public double TargetError = double.NaN;
@@ -71,6 +72,7 @@ namespace MuMech.AdvancedLanding
         public double Twr;
         public double Probability;
         public double EntryBurnCountdown = double.NaN;
+        public double EntryBurnDeltaVSpent;
         public double AtmosphereEntryCountdown = double.NaN;
         public double AtmosphereEntryRealSeconds = double.NaN;
         public double LandingBurnCountdown = double.NaN;
@@ -114,6 +116,7 @@ namespace MuMech.AdvancedLanding
             AutoWarpActive = false;
             FuelConservationActive = false;
             TargetAheadOfImpact = false;
+            AirbrakesDeployed = false;
             WarpMode = "1x";
             WarpRate = 1;
             TargetError = double.NaN;
@@ -126,6 +129,7 @@ namespace MuMech.AdvancedLanding
             Twr = 0;
             Probability = 0;
             EntryBurnCountdown = double.NaN;
+            EntryBurnDeltaVSpent = 0;
             AtmosphereEntryCountdown = double.NaN;
             AtmosphereEntryRealSeconds = double.NaN;
             LandingBurnCountdown = double.NaN;

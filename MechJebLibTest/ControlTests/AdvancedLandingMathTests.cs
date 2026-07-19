@@ -264,12 +264,66 @@ namespace MechJebLibTest.ControlTests
         public void AtmosphericTouchdownReserveAnticipatesTerminalFall()
         {
             double reserve = AdvancedLandingMath.AtmosphericTouchdownReserve(
-                5, true, 30000, 0, 9.81, 80, 0.5, 1.18);
+                5, 0, true, 30000, 0, 9.81, 80, 0.5, 1.18);
             double vacuumLike = AdvancedLandingMath.AtmosphericTouchdownReserve(
-                5, false, 30000, 0, 9.81, 80, 0.5, 1.18);
+                5, 0, false, 30000, 0, 9.81, 80, 0.5, 1.18);
 
             Assert.True(reserve > 200);
             Assert.True(reserve > vacuumLike);
+        }
+
+        [Fact]
+        public void PlanningUsesCurrentMassThrustInsteadOfEndOfBurnMaximum()
+        {
+            Assert.Equal(20, AdvancedLandingMath.PlanningThrustAcceleration(
+                20, 8, 9.81), 8);
+            Assert.Equal(78.48, AdvancedLandingMath.PlanningThrustAcceleration(
+                0, 8, 9.81), 8);
+            Assert.Equal(0, AdvancedLandingMath.PlanningThrustAcceleration(
+                double.NaN, double.NaN, 9.81), 8);
+        }
+
+        [Fact]
+        public void AutomaticAirbrakesExtendUndershootAndShortenOvershoot()
+        {
+            Assert.False(AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                true, 40000, 50, 8000, 0.4, 0.85));
+            Assert.True(AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                false, 40000, 50, 1000, 0.4, 0.85));
+            Assert.True(AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                true, 40000, 50, 1000, 0.80, 0.85));
+            Assert.False(AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                false, 20, 50, 1000, 0.4, 0.85));
+        }
+
+        [Fact]
+        public void NormalEntryBurnIsSingleAndFuelBudgeted()
+        {
+            Assert.True(AdvancedLandingMath.NormalEntryBurnShouldStart(
+                false, false, 1300, 1200, 500, 200, false));
+            Assert.False(AdvancedLandingMath.NormalEntryBurnShouldStart(
+                true, false, 1300, 1200, 500, 200, false));
+            Assert.False(AdvancedLandingMath.NormalEntryBurnShouldStart(
+                false, true, 1300, 1200, 500, 200, false));
+            Assert.False(AdvancedLandingMath.NormalEntryBurnShouldStart(
+                false, false, 1300, 1200, 150, 200, false));
+            Assert.True(AdvancedLandingMath.NormalEntryBurnShouldStart(
+                false, false, 1300, 1200, -100, 200, true));
+        }
+
+        [Fact]
+        public void EntryBurnStopsAtTargetBudgetOrDurationButSafetyOverrides()
+        {
+            Assert.True(AdvancedLandingMath.EntryBurnShouldContinue(
+                false, 1100, 900, 100, 200, 10, 15));
+            Assert.False(AdvancedLandingMath.EntryBurnShouldContinue(
+                false, 850, 900, 100, 200, 10, 15));
+            Assert.False(AdvancedLandingMath.EntryBurnShouldContinue(
+                false, 1100, 900, 200, 200, 10, 15));
+            Assert.False(AdvancedLandingMath.EntryBurnShouldContinue(
+                false, 1100, 900, 100, 200, 15, 15));
+            Assert.True(AdvancedLandingMath.EntryBurnShouldContinue(
+                true, 850, 900, 250, 200, 20, 15));
         }
 
         [Fact]
@@ -295,6 +349,72 @@ namespace MechJebLibTest.ControlTests
                 true, false, 400, 100, 150, 100));
             Assert.False(AdvancedLandingMath.ShouldConserveLandingFuel(
                 true, true, 100, 100, 150, double.PositiveInfinity));
+        }
+
+        [Fact]
+        public void FailedFlightReplayRejectsThe419KilometerPoweredChase()
+        {
+            // KSP.log 12:31:30: range 418740.9 m, predicted miss 143783 m,
+            // horizontal speed 1685.9 m/s, available delta-v 1905.8 m/s, TWR 8.24,
+            // q=0 Pa. Even granting 300 seconds, the translation and gravity loss
+            // exceed the fuel that the old controller spent trying to chase the target.
+            const double gravity = 9.81;
+            double thrustAcceleration = 8.24 * gravity;
+            double lateralAcceleration = thrustAcceleration * System.Math.Sin(25 * System.Math.PI / 180);
+            double touchdown = AdvancedLandingMath.AtmosphericTouchdownReserve(
+                0, 1685.9, true, 60000, 0, gravity, thrustAcceleration, 0.5, 1.18);
+            double divert = AdvancedLandingMath.PoweredDivertDeltaV(
+                143783, 50, 1685.9, lateralAcceleration, 120, 300, gravity);
+            double protectedReserve = 1905.8 * 0.15;
+
+            Assert.True(divert > 1900);
+            Assert.True(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, false, 1905.8, protectedReserve, touchdown, divert));
+            Assert.False(AdvancedLandingMath.PoweredTargetCaptureWindowOpen(
+                true, 143783, 5, 300,
+                AdvancedLandingMath.TargetCaptureTime(143778, 1685.9, lateralAcceleration) * 1.18,
+                1.5));
+        }
+
+        [Fact]
+        public void FailedFlightReplayProtectsTheLast102MetersPerSecond()
+        {
+            // KSP.log 12:40:40: miss 41737.9 m, horizontal speed 43.9 m/s,
+            // available delta-v 102.2 m/s and q=8133 Pa. Precision capture was no
+            // longer viable; the remaining propellant belonged to touchdown.
+            const double gravity = 9.81;
+            double thrustAcceleration = 7.4 * gravity;
+            double touchdown = AdvancedLandingMath.AtmosphericTouchdownReserve(
+                50, 43.9, true, 3000, 8133, gravity, thrustAcceleration, 0.5, 1.18);
+            double divert = AdvancedLandingMath.PoweredDivertDeltaV(
+                41737.9, 50, 43.9, 15, 120, 90, gravity);
+
+            Assert.True(touchdown > 102.2);
+            Assert.True(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, false, 102.2, 0, touchdown, divert));
+        }
+
+        [Fact]
+        public void ReachableNearTargetLandingKeepsPoweredPrecisionAvailable()
+        {
+            double touchdown = AdvancedLandingMath.AtmosphericTouchdownReserve(
+                60, 5, true, 1000, 5000, 9.81, 60, 0.2, 1.05);
+            double divert = AdvancedLandingMath.PoweredDivertDeltaV(
+                75, 50, 5, 10, 30, 30, 9.81);
+
+            Assert.False(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, false, 800, 100, touchdown, divert));
+        }
+
+        [Fact]
+        public void UnreachableLandingHasZeroProbability()
+        {
+            Assert.Equal(0, AdvancedLandingMath.LandingProbability(
+                1000, double.PositiveInfinity, 2, 100, 50,
+                0.2, 1, 6, true, true));
+            Assert.Equal(0, AdvancedLandingMath.LandingProbability(
+                1000, double.NaN, 2, 100, 50,
+                0.2, 1, 6, true, true));
         }
 
         [Fact]

@@ -51,8 +51,8 @@ namespace MuMech
                 IsFinite(telemetry.PredictedLatitude)
                     ? Coordinates.ToStringDMS(telemetry.PredictedLatitude, telemetry.PredictedLongitude)
                     : "N/A", Color.white);
-            DrawReadout("Landing Δv", telemetry.RequiredDeltaV.ToString("F0") + " / " +
-                                       telemetry.AvailableDeltaV.ToString("F0") + " m/s",
+            DrawReadout("Landing Δv", FormatDeltaV(telemetry.RequiredDeltaV) + " / " +
+                                       FormatDeltaV(telemetry.AvailableDeltaV),
                 autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
             DrawReadout("Targeted deorbit",
                 telemetry.DeorbitDeltaV > 0
@@ -73,7 +73,7 @@ namespace MuMech
             DrawReadout("Periapsis actual / target",
                 telemetry.PeriapsisAltitude.ToString("F0") + " / " +
                 telemetry.DeorbitPeriapsisTarget.ToString("F0") + " m", Color.white);
-            DrawReadout("Fuel margin", telemetry.FuelMarginDeltaV.ToString("F0") + " m/s",
+            DrawReadout("Fuel margin", FormatDeltaV(telemetry.FuelMarginDeltaV),
                 autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
             DrawReadout("Touchdown / divert / protected",
                 FormatDeltaV(telemetry.TouchdownReserveDeltaV) + " / " +
@@ -93,6 +93,9 @@ namespace MuMech
                 telemetry.Probability >= 70 ? Color.green : telemetry.Probability >= 40 ? Color.yellow : Color.red);
             DrawReadout("Entry / landing burn",
                 FormatTime(telemetry.EntryBurnCountdown) + " / " + FormatTime(telemetry.LandingBurnCountdown), Color.white);
+            DrawReadout("Entry burn fuel used",
+                telemetry.EntryBurnDeltaVSpent.ToString("F0") + " / " +
+                autopilot.MaximumEntryBurnDeltaV.Val.ToString("F0") + " m/s", Color.white);
             DrawReadout("Atmosphere entry (game / real)",
                 FormatTime(telemetry.AtmosphereEntryCountdown) + " / " +
                 FormatTime(telemetry.AtmosphereEntryRealSeconds),
@@ -114,6 +117,10 @@ namespace MuMech
                 telemetry.CommandedVerticalAcceleration.ToString("F1") + " m/s² / " +
                 (100 * telemetry.CommandedThrottle).ToString("F0") + "%", Color.white);
             DrawReadout("Dynamic pressure", telemetry.DynamicPressure.ToSI() + "Pa", Color.white);
+            DrawReadout("Target direction / airbrakes",
+                (telemetry.TargetAheadOfImpact ? "beyond impact" : "at/behind impact") + " / " +
+                (telemetry.AirbrakesDeployed ? "deployed" : "retracted"),
+                telemetry.TargetAheadOfImpact && !telemetry.AirbrakesDeployed ? Color.green : Color.white);
             DrawReadout("Upper RCS / roll-disabled fins",
                 telemetry.UpperRcsModules + " / " + telemetry.RollSuppressedSurfaces,
                 telemetry.UpperRcsModules > 0 ? Color.green : Color.yellow);
@@ -193,6 +200,10 @@ namespace MuMech
             GuiUtils.SimpleTextBox("Allow hover/climb below:", autopilot.HoverCaptureAltitude, "m", 55);
             GuiUtils.SimpleTextBox("Minimum throttle pulse:", autopilot.ThrottlePulseWidth, "s", 55);
             GuiUtils.SimpleTextBox("Landing burn lead:", autopilot.LandingBurnLead, "s", 55);
+            GuiUtils.SimpleTextBox("Entry burn start speed:", autopilot.EntryBurnStartSpeed, "m/s", 55);
+            GuiUtils.SimpleTextBox("Entry burn target speed:", autopilot.EntryBurnTargetSpeed, "m/s", 55);
+            GuiUtils.SimpleTextBox("Maximum entry-burn Δv:", autopilot.MaximumEntryBurnDeltaV, "m/s", 55);
+            GuiUtils.SimpleTextBox("Maximum entry-burn time:", autopilot.MaximumEntryBurnDuration, "s", 55);
 
             autopilot.UseTrajectories = GUILayout.Toggle(autopilot.UseTrajectories, "Use Trajectories when installed");
             autopilot.BoosterRecoveryMode = GUILayout.Toggle(autopilot.BoosterRecoveryMode, "Booster recovery / boostback");
@@ -254,7 +265,8 @@ namespace MuMech
         }
 
         private static string FormatDistance(double value) => IsFinite(value) ? value.ToSI() + "m" : "N/A";
-        private static string FormatDeltaV(double value) => IsFinite(value) ? value.ToString("F0") + " m/s" : "unreachable";
+        private static string FormatDeltaV(double value) =>
+            IsFinite(value) ? value.ToString("F0") + " m/s" : value < 0 ? "insufficient" : "unreachable";
         private static string FormatTime(double value) => IsFinite(value) ? GuiUtils.TimeToDHMS(value, 1) : "N/A";
         private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 

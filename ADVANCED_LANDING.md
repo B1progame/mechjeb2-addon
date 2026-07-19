@@ -35,7 +35,11 @@ After the targeted burn, **Entry coast** holds an engine-first retrograde attitu
 
 The **Forget fuel limits (cheat)** button persistently bypasses available-delta-v, reserve, and fuel-margin gates. It does not bypass engine relight, landing TWR, heat, G-force, attitude, or trajectory safety checks. Press the button again to restore normal fuel accounting.
 
-The optional **Conserve fuel when precision landing is no longer affordable** fallback separates the fixed engagement reserve, forecast terminal touchdown burn, powered translation, and translation gravity losses. When the full precision divert cannot be afforded, the controller stops using engines and RCS to chase the target, retracts automatic airbrakes when the target lies beyond the predicted impact to extend the glide, and protects the remaining propulsion for a late vertical landing burn. Heat and G safety can still override fuel conservation with an entry burn.
+The optional **Conserve fuel when precision landing is no longer affordable** fallback separates the fixed engagement reserve, forecast terminal touchdown burn, powered translation, and translation gravity losses. When the full precision divert cannot be afforded, the controller stops using engines and RCS to chase the target and protects the remaining propulsion for a late vertical landing burn. Heat and G safety can still override fuel conservation with an entry burn. Fuel and stopping predictions use current-mass/initial-stage TWR rather than the optimistic end-of-burn maximum TWR.
+
+Automatic airbrakes are directional: they retract when the selected target lies beyond the predicted impact to extend the aerodynamic glide, and deploy when the vehicle is overshooting or needs additional drag for heat protection. The UI and debug log report both the target direction and commanded airbrake state.
+
+The normal entry burn is a single bounded event rather than an open-ended speed hold. Its start speed, target speed, maximum delta-v, and maximum duration are persistent settings (1200 m/s, 900 m/s, 200 m/s, and 15 seconds by default). It starts only when that budget remains above the landing reserve. Heat or G-force protection may continue/restart an entry burn beyond the normal cap because vehicle survival takes priority.
 
 The Advanced Landing window reports predicted impact, surface target error, required/available delta-v, reserve margin, TWR, estimated landing probability, burn countdowns, heat/G state, predictor source, and warnings. Debug mode adds impact/target map markers and phase telemetry to `KSP.log`.
 

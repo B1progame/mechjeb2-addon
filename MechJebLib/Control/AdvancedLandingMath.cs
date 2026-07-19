@@ -36,11 +36,24 @@ namespace MechJebLib.Control
             return speed + gravity * burnTime + gravity * Max(0, responseTime);
         }
 
-        public static double AtmosphericTouchdownReserve(double downwardSpeed, bool bodyHasAtmosphere,
-            double altitude, double dynamicPressure, double gravity, double thrustAcceleration,
-            double responseTime, double safetyFactor)
+        public static double PlanningThrustAcceleration(double liveThrustAcceleration,
+            double initialStageTwr, double gravity)
+        {
+            if (!double.IsNaN(liveThrustAcceleration) && !double.IsInfinity(liveThrustAcceleration) &&
+                liveThrustAcceleration > 0)
+                return liveThrustAcceleration;
+            if (double.IsNaN(initialStageTwr) || double.IsInfinity(initialStageTwr) ||
+                double.IsNaN(gravity) || double.IsInfinity(gravity))
+                return 0;
+            return Max(0, initialStageTwr) * Max(0, gravity);
+        }
+
+        public static double AtmosphericTouchdownReserve(double downwardSpeed, double horizontalSpeed,
+            bool bodyHasAtmosphere, double altitude, double dynamicPressure, double gravity,
+            double thrustAcceleration, double responseTime, double safetyFactor)
         {
             double expectedDownwardSpeed = Max(0, downwardSpeed);
+            double expectedHorizontalSpeed = Max(0, horizontalSpeed);
             if (bodyHasAtmosphere && altitude > 500)
             {
                 // At entry altitude the instantaneous vertical speed is often close to zero,
@@ -49,9 +62,16 @@ namespace MechJebLib.Control
                 double terminalForecast = dynamicPressure < 250 ? 180 :
                     dynamicPressure < 3000 ? 140 : 90;
                 expectedDownwardSpeed = Max(expectedDownwardSpeed, terminalForecast);
+
+                // Do not charge the full orbital velocity as propulsive delta-v, but retain
+                // a terminal crossrange allowance because final guidance really does command
+                // the engine and RCS to cancel residual horizontal motion.
+                double terminalHorizontalCap = dynamicPressure < 250 ? 120 :
+                    dynamicPressure < 3000 ? 80 : 50;
+                expectedHorizontalSpeed = Min(expectedHorizontalSpeed, terminalHorizontalCap);
             }
 
-            double required = RequiredLandingDeltaV(expectedDownwardSpeed, 0, gravity,
+            double required = RequiredLandingDeltaV(expectedDownwardSpeed, expectedHorizontalSpeed, gravity,
                 thrustAcceleration, responseTime);
             if (double.IsInfinity(required)) return required;
 
@@ -91,6 +111,34 @@ namespace MechJebLib.Control
             if (double.IsInfinity(touchdownDeltaV) || double.IsInfinity(poweredDivertDeltaV) ||
                 double.IsNaN(poweredDivertDeltaV)) return true;
             return availableDeltaV < protectedReserveDeltaV + touchdownDeltaV + poweredDivertDeltaV;
+        }
+
+        public static bool AutomaticAirbrakesShouldDeploy(bool targetAheadOfImpact,
+            double targetError, double targetRadius, double dynamicPressure,
+            double heatRatio, double maximumHeatRatio)
+        {
+            bool heatRequiresDrag = heatRatio > maximumHeatRatio - 0.12;
+            if (heatRequiresDrag) return true;
+            if (targetAheadOfImpact) return false;
+            return targetError > targetRadius || dynamicPressure > 3000;
+        }
+
+        public static bool NormalEntryBurnShouldStart(bool alreadyCompleted, bool conserveFuel,
+            double speed, double startSpeed, double fuelMarginDeltaV, double burnBudgetDeltaV,
+            bool ignoreFuelLimits)
+        {
+            return !alreadyCompleted && !conserveFuel && speed >= Max(0, startSpeed) &&
+                   (ignoreFuelLimits || fuelMarginDeltaV > Max(0, burnBudgetDeltaV));
+        }
+
+        public static bool EntryBurnShouldContinue(bool safetyRequired, double speed,
+            double targetSpeed, double spentDeltaV, double budgetDeltaV,
+            double elapsedTime, double maximumDuration)
+        {
+            if (safetyRequired) return true;
+            return speed > Max(0, targetSpeed) &&
+                   spentDeltaV < Max(0, budgetDeltaV) &&
+                   elapsedTime < Max(0, maximumDuration);
         }
 
         public static double VerticalThrottle(double altitude, double verticalSpeed, double targetTouchdownSpeed,
@@ -317,7 +365,8 @@ namespace MechJebLib.Control
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,
             double targetRadius, double heatRatio, double gLoad, double maxG, bool engineRelightAvailable, bool predictionReady)
         {
-            if (!engineRelightAvailable || !predictionReady || requiredDeltaV <= 0 || double.IsInfinity(requiredDeltaV)) return 0;
+            if (!engineRelightAvailable || !predictionReady || requiredDeltaV <= 0 ||
+                double.IsNaN(requiredDeltaV) || double.IsInfinity(requiredDeltaV)) return 0;
 
             double deltaVMargin = availableDeltaV / requiredDeltaV;
             double deltaVScore = Clamp01((deltaVMargin - 0.85) / 0.45);

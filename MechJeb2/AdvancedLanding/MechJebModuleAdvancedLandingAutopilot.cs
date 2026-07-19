@@ -56,6 +56,18 @@ namespace MuMech
         public readonly EditableDouble LandingBurnLead = 1.5;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble EntryBurnStartSpeed = 1200;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble EntryBurnTargetSpeed = 900;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble MaximumEntryBurnDeltaV = 200;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble MaximumEntryBurnDuration = 15;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public bool UseTrajectories = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -163,6 +175,9 @@ namespace MuMech
         private bool _autoWarpActive;
         private double _bestDeorbitAimError = double.PositiveInfinity;
         private double _protectedReserveDeltaV = double.NaN;
+        private bool _entryBurnCompleted;
+        private double _entryBurnStartAvailableDeltaV;
+        private double _entryBurnStartTime;
         private CelestialBody _syncedTargetBody;
         private double _syncedTargetLatitude = double.NaN;
         private double _syncedTargetLongitude = double.NaN;
@@ -232,6 +247,9 @@ namespace MuMech
             _autoWarpActive = false;
             _bestDeorbitAimError = double.PositiveInfinity;
             _protectedReserveDeltaV = double.NaN;
+            _entryBurnCompleted = false;
+            _entryBurnStartAvailableDeltaV = 0;
+            _entryBurnStartTime = 0;
             _landingPwm.Reset();
             ConfigureStabilizationHardware();
             SetPhase(AdvancedLandingPhase.Preflight);
@@ -384,8 +402,9 @@ namespace MuMech
                 return;
             }
 
-            double projectedThrustAcceleration = Max(VesselState.LimitedMaxThrustAcceleration,
-                Telemetry.Twr * VesselState.GravityForce.magnitude);
+            double projectedThrustAcceleration = AdvancedLandingMath.PlanningThrustAcceleration(
+                VesselState.LimitedMaxThrustAcceleration, Telemetry.Twr,
+                VesselState.GravityForce.magnitude);
             double stoppingDistance = AdvancedLandingMath.StoppingDistance(Max(0, -VesselState.SpeedVertical),
                 projectedThrustAcceleration, VesselState.GravityForce.magnitude, VesselState.MaxEngineResponseTime,
                 SafetyFactor());
@@ -421,8 +440,28 @@ namespace MuMech
 
             bool safetyEntryBurn = Telemetry.HeatRatio > MaxHeatRatio - 0.1 ||
                                    MaxGForce > 0 && Telemetry.GLoad > MaxGForce * 0.8;
+            if (Telemetry.Phase == AdvancedLandingPhase.EntryBurn)
+            {
+                double spentDeltaV = Max(0, _entryBurnStartAvailableDeltaV - Telemetry.AvailableDeltaV);
+                double elapsed = Max(0, VesselState.Time - _entryBurnStartTime);
+                Telemetry.EntryBurnDeltaVSpent = spentDeltaV;
+                if (AdvancedLandingMath.EntryBurnShouldContinue(
+                        safetyEntryBurn, speed, EntryBurnTargetSpeed, spentDeltaV,
+                        MaximumEntryBurnDeltaV, elapsed, MaximumEntryBurnDuration))
+                {
+                    SetPhase(AdvancedLandingPhase.EntryBurn);
+                    return;
+                }
+
+                _entryBurnCompleted = true;
+            }
+
+            bool normalEntryBurn = AdvancedLandingMath.NormalEntryBurnShouldStart(
+                _entryBurnCompleted, Telemetry.FuelConservationActive, speed,
+                EntryBurnStartSpeed, Telemetry.FuelMarginDeltaV,
+                MaximumEntryBurnDeltaV, IgnoreFuelLimits);
             if (MainBody.atmosphere && VesselState.AltitudeASL < atmosphereTop * 0.8 &&
-                (safetyEntryBurn || !Telemetry.FuelConservationActive && speed > 800))
+                (safetyEntryBurn || normalEntryBurn))
             {
                 SetPhase(AdvancedLandingPhase.EntryBurn);
                 return;
@@ -821,13 +860,11 @@ namespace MuMech
                 Core.RCS.SetWorldVelocityError(Vector3d.zero);
             }
 
-            bool heatRequiresDrag = Telemetry.HeatRatio > MaxHeatRatio - 0.12;
-            bool conserveAndExtendGlide = Telemetry.FuelConservationActive &&
-                                          Telemetry.TargetAheadOfImpact && !heatRequiresDrag;
             bool deploy = AirbrakeMode == AdvancedLandingAirbrakeMode.Deployed ||
                           AirbrakeMode == AdvancedLandingAirbrakeMode.Automatic &&
-                          !conserveAndExtendGlide &&
-                          (Telemetry.TargetError > TargetRadius || VesselState.DynamicPressure > 3000);
+                          AdvancedLandingMath.AutomaticAirbrakesShouldDeploy(
+                              Telemetry.TargetAheadOfImpact, Telemetry.TargetError, TargetRadius,
+                              VesselState.DynamicPressure, Telemetry.HeatRatio, MaxHeatRatio);
             SetAirbrakes(deploy);
         }
 
@@ -992,6 +1029,7 @@ namespace MuMech
         {
             if (!UseAirbrakes || AirbrakeMode == AdvancedLandingAirbrakeMode.Retracted) deploy = false;
             Vessel.ActionGroups.SetGroup(KSPActionGroup.Brakes, deploy);
+            Telemetry.AirbrakesDeployed = deploy;
         }
 
         private void SynchronizeTarget(bool force)
@@ -1118,10 +1156,11 @@ namespace MuMech
                 if (!orbitalApproach) Telemetry.DeorbitDeltaV = 0;
                 double vertical = Max(0, -VesselState.SpeedVertical);
                 double horizontal = VesselState.SpeedSurfaceHorizontal;
-                double projectedThrustAcceleration = Max(VesselState.LimitedMaxThrustAcceleration,
-                    Telemetry.Twr * VesselState.GravityForce.magnitude);
+                double projectedThrustAcceleration = AdvancedLandingMath.PlanningThrustAcceleration(
+                    VesselState.LimitedMaxThrustAcceleration, Telemetry.Twr,
+                    VesselState.GravityForce.magnitude);
                 Telemetry.TouchdownReserveDeltaV = AdvancedLandingMath.AtmosphericTouchdownReserve(
-                    vertical, MainBody.atmosphere, VesselState.AltitudeASL, VesselState.DynamicPressure,
+                    vertical, horizontal, MainBody.atmosphere, VesselState.AltitudeASL, VesselState.DynamicPressure,
                     VesselState.GravityForce.magnitude, projectedThrustAcceleration,
                     VesselState.MaxEngineResponseTime, SafetyFactor());
                 double lateralAcceleration = Max(0.5, projectedThrustAcceleration *
@@ -1212,20 +1251,19 @@ namespace MuMech
         {
             double liveTwr = VesselState.LimitedMaxThrustAcceleration /
                              Max(VesselState.GravityForce.magnitude, 0.01);
+            if (liveTwr > 0) return liveTwr;
             if (Core.StageStats.AtmoStats.Count == 0) return liveTwr;
 
-            int selectedStage = -1;
-            double projectedTwr = liveTwr;
             for (int i = Core.StageStats.AtmoStats.Count - 1; i >= 0; i--)
             {
                 FuelStats stats = Core.StageStats.AtmoStats[i];
                 if (stats.DeltaV <= 0) continue;
-                if (selectedStage < 0) selectedStage = stats.KSPStage;
-                if (EngineMode != AdvancedLandingEngineMode.AllActive && stats.KSPStage != selectedStage) break;
-                projectedTwr = Max(projectedTwr, stats.MaxTWR(MainBody.GeeASL));
+                // Count-1 is MechJeb's current stage. StartTWR uses its present mass;
+                // MaxTWR uses end-of-burn mass and is too optimistic for suicide-burn timing.
+                return stats.StartTWR(MainBody.GeeASL);
             }
 
-            return projectedTwr;
+            return liveTwr;
         }
 
         private bool EngineRelightAvailable()
@@ -1268,8 +1306,9 @@ namespace MuMech
         {
             double altitude = Max(0, Min(VesselState.AltitudeBottom, VesselState.AltitudeTrue));
             double verticalSpeed = Max(1, -VesselState.SpeedVertical);
-            double projectedThrustAcceleration = Max(VesselState.LimitedMaxThrustAcceleration,
-                Telemetry.Twr * VesselState.GravityForce.magnitude);
+            double projectedThrustAcceleration = AdvancedLandingMath.PlanningThrustAcceleration(
+                VesselState.LimitedMaxThrustAcceleration, Telemetry.Twr,
+                VesselState.GravityForce.magnitude);
             double stoppingDistance = AdvancedLandingMath.StoppingDistance(verticalSpeed, projectedThrustAcceleration,
                 VesselState.GravityForce.magnitude, VesselState.MaxEngineResponseTime, SafetyFactor());
             if (!IsFinite(stoppingDistance)) return double.NaN;
@@ -1419,6 +1458,13 @@ namespace MuMech
             if (phase == AdvancedLandingPhase.LandingBurn &&
                 _previousPhase != AdvancedLandingPhase.FinalDescent)
                 _landingPwm.Reset();
+            if (phase == AdvancedLandingPhase.EntryBurn &&
+                _previousPhase != AdvancedLandingPhase.EntryBurn)
+            {
+                _entryBurnStartAvailableDeltaV = Telemetry.AvailableDeltaV;
+                _entryBurnStartTime = VesselState.Time;
+                Telemetry.EntryBurnDeltaVSpent = 0;
+            }
             if (phase == AdvancedLandingPhase.DeorbitBurn || phase == AdvancedLandingPhase.Boostback || phase == AdvancedLandingPhase.EntryBurn ||
                 phase == AdvancedLandingPhase.LandingBurn || phase == AdvancedLandingPhase.FinalDescent)
             {
@@ -1494,11 +1540,13 @@ namespace MuMech
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
                   $"touchdownDv={Telemetry.TouchdownReserveDeltaV:F1}m/s divertDv={Telemetry.PoweredDivertDeltaV:F1}m/s " +
                   $"protectedDv={Telemetry.ProtectedReserveDeltaV:F1}m/s conserveFuel={Telemetry.FuelConservationActive} " +
+                  $"targetAhead={Telemetry.TargetAheadOfImpact} airbrakes={Telemetry.AirbrakesDeployed} " +
                   $"aimPast={Telemetry.DeorbitAimOvershoot:F0}m aimErr={Telemetry.DeorbitAimError:F0}m " +
                   $"alt={Telemetry.AltitudeAsl:F0}m vs={Telemetry.VerticalSpeed:F1}m/s pea={Telemetry.PeriapsisAltitude:F0}/{Telemetry.DeorbitPeriapsisTarget:F0}m " +
                   $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} " +
                   $"warp={Telemetry.WarpMode}/{Telemetry.WarpRate:F1}x " +
                   $"entryIn={Telemetry.AtmosphereEntryCountdown:F1}s real={Telemetry.AtmosphereEntryRealSeconds:F1}s " +
+                  $"entryBurnSpent={Telemetry.EntryBurnDeltaVSpent:F1}m/s " +
                   $"ignoreFuel={IgnoreFuelLimits} twr={Telemetry.Twr:F2} " +
                   $"p={Telemetry.Probability:F0}% upperRcs={Telemetry.UpperRcsModules} finsNoRoll={Telemetry.RollSuppressedSurfaces} " +
                   $"impact={Telemetry.PredictedLatitude:F5},{Telemetry.PredictedLongitude:F5}");
