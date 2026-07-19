@@ -36,6 +36,63 @@ namespace MechJebLib.Control
             return speed + gravity * burnTime + gravity * Max(0, responseTime);
         }
 
+        public static double AtmosphericTouchdownReserve(double downwardSpeed, bool bodyHasAtmosphere,
+            double altitude, double dynamicPressure, double gravity, double thrustAcceleration,
+            double responseTime, double safetyFactor)
+        {
+            double expectedDownwardSpeed = Max(0, downwardSpeed);
+            if (bodyHasAtmosphere && altitude > 500)
+            {
+                // At entry altitude the instantaneous vertical speed is often close to zero,
+                // but a booster still needs fuel for the terminal fall after drag has removed
+                // its orbital velocity. Dynamic pressure progressively lowers that forecast.
+                double terminalForecast = dynamicPressure < 250 ? 180 :
+                    dynamicPressure < 3000 ? 140 : 90;
+                expectedDownwardSpeed = Max(expectedDownwardSpeed, terminalForecast);
+            }
+
+            double required = RequiredLandingDeltaV(expectedDownwardSpeed, 0, gravity,
+                thrustAcceleration, responseTime);
+            if (double.IsInfinity(required)) return required;
+
+            // Preserve relight, spool-up and a small flare/attitude reserve even when the
+            // vehicle is momentarily descending slowly.
+            double terminalMinimum = 40 + Max(0, gravity) * (2 + Max(0, responseTime));
+            return Max(1, safetyFactor) * Max(required, terminalMinimum);
+        }
+
+        public static double PoweredDivertDeltaV(double missDistance, double targetRadius,
+            double horizontalSpeed, double lateralAcceleration, double maximumHorizontalSpeed,
+            double timeToImpact, double gravity)
+        {
+            double distance = Max(0, missDistance - Max(0, targetRadius));
+            if (distance <= 0) return 0;
+            if (lateralAcceleration <= 0 || maximumHorizontalSpeed <= 0 ||
+                timeToImpact <= 0 || double.IsNaN(timeToImpact) || double.IsInfinity(timeToImpact))
+                return double.PositiveInfinity;
+
+            double captureTime = TargetCaptureTime(distance, horizontalSpeed, lateralAcceleration);
+            if (captureTime > timeToImpact * 1.15) return double.PositiveInfinity;
+
+            double translationDeltaV = 2 * Min(maximumHorizontalSpeed,
+                Sqrt(lateralAcceleration * distance));
+            double velocityCancellation = 0.25 * Max(0, horizontalSpeed);
+            double gravityLoss = 0.75 * Max(0, gravity) * captureTime;
+            return translationDeltaV + velocityCancellation + gravityLoss;
+        }
+
+        public static bool ShouldConserveLandingFuel(bool enabled, bool ignoreFuelLimits,
+            double availableDeltaV, double protectedReserveDeltaV, double touchdownDeltaV,
+            double poweredDivertDeltaV)
+        {
+            if (!enabled || ignoreFuelLimits) return false;
+            if (availableDeltaV < 0 || protectedReserveDeltaV < 0 ||
+                touchdownDeltaV < 0 || double.IsNaN(touchdownDeltaV)) return true;
+            if (double.IsInfinity(touchdownDeltaV) || double.IsInfinity(poweredDivertDeltaV) ||
+                double.IsNaN(poweredDivertDeltaV)) return true;
+            return availableDeltaV < protectedReserveDeltaV + touchdownDeltaV + poweredDivertDeltaV;
+        }
+
         public static double VerticalThrottle(double altitude, double verticalSpeed, double targetTouchdownSpeed,
             double gravity, double minThrustAcceleration, double maxThrustAcceleration)
         {
@@ -189,20 +246,72 @@ namespace MechJebLib.Control
         }
 
         public static bool AtmosphericPoweredCaptureAllowed(bool atmosphericCaptureOnly, bool bodyHasAtmosphere,
-            double altitudeAsl, double atmosphereTop)
+            double altitudeAsl, double atmosphereTop, double dynamicPressure,
+            double captureAltitudeRatio, double minimumDynamicPressure)
         {
-            return !atmosphericCaptureOnly || !bodyHasAtmosphere || altitudeAsl < atmosphereTop;
+            if (!atmosphericCaptureOnly || !bodyHasAtmosphere) return true;
+            double captureCeiling = Max(0, atmosphereTop) * Min(Max(captureAltitudeRatio, 0.05), 0.95);
+            return altitudeAsl < captureCeiling &&
+                   dynamicPressure >= Max(0, minimumDynamicPressure);
         }
 
         public static bool UseBallisticAtmosphericDeorbit(bool atmosphericCaptureOnly, bool bodyHasAtmosphere) =>
             atmosphericCaptureOnly && bodyHasAtmosphere;
 
-        public static bool AtmosphericDeorbitPeriapsisEstablished(double periapsisAltitude, double bodyRadius)
+        public static double AtmosphericDeorbitPeriapsisAltitude(double atmosphereTop, double periapsisRatio)
         {
-            if (bodyRadius <= 0) return false;
-            // The solver targets -10% of body radius. Stop inside a 0.5%-radius
-            // tolerance instead of the old -5% cutoff, which ended the burn halfway.
-            return periapsisAltitude <= -0.095 * bodyRadius;
+            if (atmosphereTop <= 0) return 0;
+            return atmosphereTop * Min(Max(periapsisRatio, 0.05), 0.95);
+        }
+
+        public static bool DeorbitPeriapsisEstablished(double periapsisAltitude,
+            double targetPeriapsisAltitude, double tolerance)
+        {
+            return periapsisAltitude <= targetPeriapsisAltitude + Max(0, tolerance);
+        }
+
+        public static double DeorbitTrimThrottle(double aimError, double captureTolerance)
+        {
+            if (double.IsNaN(aimError) || double.IsInfinity(aimError)) return 1;
+            double remaining = aimError - Max(0, captureTolerance);
+            if (remaining <= 0) return 0;
+            if (remaining <= 5000) return 0.05;
+            if (remaining <= 25000) return 0.10;
+            if (remaining <= 100000) return 0.20;
+            return 0.35;
+        }
+
+        public static double DeorbitDeltaVThrottle(double remainingDeltaV)
+        {
+            if (double.IsNaN(remainingDeltaV) || double.IsInfinity(remainingDeltaV) || remainingDeltaV <= 0) return 0;
+            if (remainingDeltaV <= 5) return 0.05;
+            if (remainingDeltaV <= 15) return 0.10;
+            if (remainingDeltaV <= 50) return 0.25;
+            return 0.50;
+        }
+
+        public static bool DeorbitAimPassed(double bestAimError, double currentAimError, double captureTolerance)
+        {
+            if (double.IsNaN(bestAimError) || double.IsInfinity(bestAimError) ||
+                double.IsNaN(currentAimError) || double.IsInfinity(currentAimError)) return false;
+            double closeEnoughToTrack = Max(5000, 4 * Max(0, captureTolerance));
+            return bestAimError <= closeEnoughToTrack &&
+                   currentAimError > bestAimError + Max(750, 0.25 * bestAimError);
+        }
+
+        public static bool PoweredTargetCaptureWindowOpen(bool predictionReady, double targetError,
+            double captureDeadband, double timeToImpact, double targetCaptureTime, double burnLead)
+        {
+            if (!predictionReady || targetError <= captureDeadband ||
+                timeToImpact <= 0 || targetCaptureTime <= 0 ||
+                double.IsNaN(targetCaptureTime) || double.IsInfinity(targetCaptureTime)) return false;
+
+            // Start near the accelerate/brake boundary, but reject a target that is already
+            // physically too far away. The old one-sided comparison started a continuous
+            // burn whenever capture time exceeded remaining time, even by hundreds of seconds.
+            bool physicallyReachable = targetCaptureTime <= timeToImpact * 1.15;
+            bool timeToStart = timeToImpact <= targetCaptureTime + Max(0, burnLead);
+            return physicallyReachable && timeToStart;
         }
 
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,

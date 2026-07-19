@@ -65,8 +65,29 @@ namespace MuMech
                     ? Coordinates.ToStringDMS(telemetry.DeorbitAimLatitude, telemetry.DeorbitAimLongitude) +
                       " (+" + telemetry.DeorbitAimOvershoot.ToString("F0") + " m)"
                     : "N/A", autopilot.AtmosphericCaptureOnly ? new Color(1.0f, 0.6f, 0.1f) : Color.white);
+            DrawReadout("Entry aim error",
+                FormatDistance(telemetry.DeorbitAimError), Color.white);
+            DrawReadout("Altitude / vertical speed",
+                telemetry.AltitudeAsl.ToString("F0") + " m / " +
+                telemetry.VerticalSpeed.ToString("F1") + " m/s", Color.white);
+            DrawReadout("Periapsis actual / target",
+                telemetry.PeriapsisAltitude.ToString("F0") + " / " +
+                telemetry.DeorbitPeriapsisTarget.ToString("F0") + " m", Color.white);
             DrawReadout("Fuel margin", telemetry.FuelMarginDeltaV.ToString("F0") + " m/s",
                 autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
+            DrawReadout("Touchdown / divert / protected",
+                FormatDeltaV(telemetry.TouchdownReserveDeltaV) + " / " +
+                FormatDeltaV(telemetry.PoweredDivertDeltaV) + " / " +
+                FormatDeltaV(telemetry.ProtectedReserveDeltaV),
+                telemetry.FuelConservationActive ? Color.yellow : Color.white);
+            DrawReadout("Fuel strategy",
+                telemetry.FuelConservationActive
+                    ? telemetry.TargetAheadOfImpact
+                        ? "Extend glide; save touchdown fuel"
+                        : "Aerodynamic landing; save touchdown fuel"
+                    : autopilot.IgnoreFuelLimits ? "Fuel limits ignored" : "Powered precision available",
+                telemetry.FuelConservationActive ? Color.yellow :
+                autopilot.IgnoreFuelLimits ? Color.cyan : Color.green);
             DrawReadout("Projected landing TWR", telemetry.Twr.ToString("F2"), telemetry.Twr > 1 ? Color.green : Color.red);
             DrawReadout("Landing probability", telemetry.Probability.ToString("F0") + "%",
                 telemetry.Probability >= 70 ? Color.green : telemetry.Probability >= 40 ? Color.yellow : Color.red);
@@ -162,6 +183,9 @@ namespace MuMech
                     : "Forget fuel limits (cheat)"))
                 autopilot.IgnoreFuelLimits = !autopilot.IgnoreFuelLimits;
             GUI.color = fuelButtonColor;
+            autopilot.ConserveFuelWhenLandingAtRisk =
+                GUILayout.Toggle(autopilot.ConserveFuelWhenLandingAtRisk,
+                    "Conserve fuel when precision landing is no longer affordable");
             GuiUtils.SimpleTextBox("Maximum G-force:", autopilot.MaxGForce, "g", 55);
             GuiUtils.SimpleTextBox("Heat safety:", autopilot.MaxHeatRatio, "%", 55);
             GuiUtils.SimpleTextBox("Touchdown speed:", autopilot.TouchdownSpeed, "m/s", 55);
@@ -193,6 +217,9 @@ namespace MuMech
                     "Atmospheric capture (no orbital boostback)");
             GUI.enabled = autopilot.AtmosphericCaptureOnly;
             GuiUtils.SimpleTextBox("Entry aim past target:", autopilot.EntryOvershootDistance, "m", 55);
+            GuiUtils.SimpleTextBox("Entry periapsis (% atmosphere):", autopilot.AtmosphericPeriapsisRatio, "%", 55);
+            GuiUtils.SimpleTextBox("Powered capture below (% atmosphere):", autopilot.AtmosphericCaptureStartRatio, "%", 55);
+            GuiUtils.SimpleTextBox("Powered capture minimum q:", autopilot.MinimumCaptureDynamicPressure, "Pa", 55);
             GUI.enabled = true;
             GuiUtils.SimpleTextBox("Maximum targeting tilt:", autopilot.MaximumTargetingTilt, "°", 55);
             autopilot.FastHorizontalTransfer =
@@ -227,6 +254,7 @@ namespace MuMech
         }
 
         private static string FormatDistance(double value) => IsFinite(value) ? value.ToSI() + "m" : "N/A";
+        private static string FormatDeltaV(double value) => IsFinite(value) ? value.ToString("F0") + " m/s" : "unreachable";
         private static string FormatTime(double value) => IsFinite(value) ? GuiUtils.TimeToDHMS(value, 1) : "N/A";
         private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 

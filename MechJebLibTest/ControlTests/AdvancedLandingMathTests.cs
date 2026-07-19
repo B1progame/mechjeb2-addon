@@ -193,13 +193,15 @@ namespace MechJebLibTest.ControlTests
         public void AtmosphericCaptureDefersPoweredDivertUntilEntry()
         {
             Assert.False(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
-                true, true, 70000, 70000));
+                true, true, 69999, 70000, 1000, 0.55, 250));
+            Assert.False(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                true, true, 30000, 70000, 100, 0.55, 250));
             Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
-                true, true, 69999, 70000));
+                true, true, 30000, 70000, 1000, 0.55, 250));
             Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
-                false, true, 100000, 70000));
+                false, true, 100000, 70000, 0, 0.55, 250));
             Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
-                true, false, 100000, 0));
+                true, false, 100000, 0, 0, 0.55, 250));
         }
 
         [Fact]
@@ -211,12 +213,88 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
-        public void BallisticDeorbitRunsToNearlyTheRequestedPeriapsis()
+        public void AtmosphericDeorbitUsesShallowHalfAtmospherePeriapsis()
         {
-            Assert.False(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-30000, 600000));
-            Assert.False(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-56999, 600000));
-            Assert.True(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-57000, 600000));
-            Assert.True(AdvancedLandingMath.AtmosphericDeorbitPeriapsisEstablished(-60000, 600000));
+            Assert.Equal(35000, AdvancedLandingMath.AtmosphericDeorbitPeriapsisAltitude(70000, 0.5), 8);
+            Assert.False(AdvancedLandingMath.DeorbitPeriapsisEstablished(37000, 35000, 1000));
+            Assert.True(AdvancedLandingMath.DeorbitPeriapsisEstablished(36000, 35000, 1000));
+            Assert.True(AdvancedLandingMath.DeorbitPeriapsisEstablished(35000, 35000, 1000));
+        }
+
+        [Fact]
+        public void PredictorGuidedDeorbitThrottlesDownNearAim()
+        {
+            Assert.Equal(0.35, AdvancedLandingMath.DeorbitTrimThrottle(200000, 500), 8);
+            Assert.Equal(0.20, AdvancedLandingMath.DeorbitTrimThrottle(50000, 500), 8);
+            Assert.Equal(0.10, AdvancedLandingMath.DeorbitTrimThrottle(10000, 500), 8);
+            Assert.Equal(0.05, AdvancedLandingMath.DeorbitTrimThrottle(2000, 500), 8);
+            Assert.Equal(0, AdvancedLandingMath.DeorbitTrimThrottle(500, 500), 8);
+        }
+
+        [Fact]
+        public void DeorbitThrottleIsLimitedBeforePredictionIsReady()
+        {
+            Assert.Equal(0.50, AdvancedLandingMath.DeorbitDeltaVThrottle(100), 8);
+            Assert.Equal(0.25, AdvancedLandingMath.DeorbitDeltaVThrottle(30), 8);
+            Assert.Equal(0.10, AdvancedLandingMath.DeorbitDeltaVThrottle(10), 8);
+            Assert.Equal(0.05, AdvancedLandingMath.DeorbitDeltaVThrottle(3), 8);
+            Assert.Equal(0, AdvancedLandingMath.DeorbitDeltaVThrottle(0), 8);
+        }
+
+        [Fact]
+        public void PredictorGuidedDeorbitStopsAfterPassingClosestAim()
+        {
+            Assert.False(AdvancedLandingMath.DeorbitAimPassed(4000, 4500, 500));
+            Assert.True(AdvancedLandingMath.DeorbitAimPassed(2000, 3000, 500));
+            Assert.False(AdvancedLandingMath.DeorbitAimPassed(10000, 20000, 500));
+        }
+
+        [Fact]
+        public void PoweredCaptureRejectsAlreadyImpossibleTarget()
+        {
+            Assert.True(AdvancedLandingMath.PoweredTargetCaptureWindowOpen(
+                true, 5000, 5, 100, 100, 1.5));
+            Assert.False(AdvancedLandingMath.PoweredTargetCaptureWindowOpen(
+                true, 150000, 5, 100, 200, 1.5));
+            Assert.False(AdvancedLandingMath.PoweredTargetCaptureWindowOpen(
+                true, 5000, 5, 200, 100, 1.5));
+        }
+
+        [Fact]
+        public void AtmosphericTouchdownReserveAnticipatesTerminalFall()
+        {
+            double reserve = AdvancedLandingMath.AtmosphericTouchdownReserve(
+                5, true, 30000, 0, 9.81, 80, 0.5, 1.18);
+            double vacuumLike = AdvancedLandingMath.AtmosphericTouchdownReserve(
+                5, false, 30000, 0, 9.81, 80, 0.5, 1.18);
+
+            Assert.True(reserve > 200);
+            Assert.True(reserve > vacuumLike);
+        }
+
+        [Fact]
+        public void PoweredDivertIncludesTranslationAndGravityLoss()
+        {
+            double near = AdvancedLandingMath.PoweredDivertDeltaV(
+                500, 50, 20, 15, 120, 60, 9.81);
+            double far = AdvancedLandingMath.PoweredDivertDeltaV(
+                40000, 50, 20, 15, 120, 180, 9.81);
+
+            Assert.True(near > 100);
+            Assert.True(far > near + 500);
+            Assert.True(double.IsInfinity(AdvancedLandingMath.PoweredDivertDeltaV(
+                40000, 50, 20, 15, 120, 20, 9.81)));
+        }
+
+        [Fact]
+        public void FuelConservationProtectsTouchdownBudget()
+        {
+            Assert.True(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, false, 300, 100, 150, 100));
+            Assert.False(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, false, 400, 100, 150, 100));
+            Assert.False(AdvancedLandingMath.ShouldConserveLandingFuel(
+                true, true, 100, 100, 150, double.PositiveInfinity));
         }
 
         [Fact]
