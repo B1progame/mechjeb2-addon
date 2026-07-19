@@ -60,6 +60,11 @@ namespace MuMech
                       (telemetry.AutoWarpActive ? " (warping)" : "")
                     : "N/A",
                 telemetry.OrbitalReachable ? Color.green : Color.white);
+            DrawReadout("Atmospheric entry aim",
+                IsFinite(telemetry.DeorbitAimLatitude)
+                    ? Coordinates.ToStringDMS(telemetry.DeorbitAimLatitude, telemetry.DeorbitAimLongitude) +
+                      " (+" + telemetry.DeorbitAimOvershoot.ToString("F0") + " m)"
+                    : "N/A", autopilot.AtmosphericCaptureOnly ? new Color(1.0f, 0.6f, 0.1f) : Color.white);
             DrawReadout("Fuel margin", telemetry.FuelMarginDeltaV.ToString("F0") + " m/s",
                 autopilot.IgnoreFuelLimits ? Color.cyan : telemetry.FuelMarginDeltaV >= 0 ? Color.green : Color.red);
             DrawReadout("Projected landing TWR", telemetry.Twr.ToString("F2"), telemetry.Twr > 1 ? Color.green : Color.red);
@@ -183,6 +188,12 @@ namespace MuMech
                 GUILayout.Toggle(autopilot.SuppressAerodynamicRoll, "Disable roll input on fins during recovery");
             autopilot.PoweredTargetCapture =
                 GUILayout.Toggle(autopilot.PoweredTargetCapture, "Start powered divert early to capture target");
+            autopilot.AtmosphericCaptureOnly =
+                GUILayout.Toggle(autopilot.AtmosphericCaptureOnly,
+                    "Atmospheric capture (no orbital boostback)");
+            GUI.enabled = autopilot.AtmosphericCaptureOnly;
+            GuiUtils.SimpleTextBox("Entry aim past target:", autopilot.EntryOvershootDistance, "m", 55);
+            GUI.enabled = true;
             GuiUtils.SimpleTextBox("Maximum targeting tilt:", autopilot.MaximumTargetingTilt, "°", 55);
             autopilot.FastHorizontalTransfer =
                 GUILayout.Toggle(autopilot.FastHorizontalTransfer, "Fast horizontal accelerate / brake transfer");

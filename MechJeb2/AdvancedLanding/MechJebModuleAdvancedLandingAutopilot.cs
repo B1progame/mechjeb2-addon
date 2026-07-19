@@ -86,6 +86,12 @@ namespace MuMech
         public bool PoweredTargetCapture = true;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public bool AtmosphericCaptureOnly = true;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
+        public readonly EditableDouble EntryOvershootDistance = 5000;
+
+        [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
         public readonly EditableDouble MaximumTargetingTilt = 25;
 
         [Persistent(pass = (int)(Pass.LOCAL | Pass.TYPE | Pass.GLOBAL))]
@@ -163,6 +169,9 @@ namespace MuMech
             public double TargetAheadAngle;
             public double PlaneChangeAngle;
             public double TargetAngleToOrbitNormal;
+            public double AimOvershoot;
+            public double AimLatitude;
+            public double AimLongitude;
         }
 
         public MechJebModuleAdvancedLandingAutopilot(MechJebCore core) : base(core)
@@ -362,7 +371,10 @@ namespace MuMech
             double targetCaptureTime = AdvancedLandingMath.TargetCaptureTime(
                 Max(0, Telemetry.TargetError - captureDeadband), VesselState.SpeedSurfaceHorizontal,
                 availableLateralAcceleration) * SafetyFactor();
+            bool poweredCaptureAllowed = AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                AtmosphericCaptureOnly, MainBody.atmosphere, VesselState.AltitudeASL, atmosphereTop);
             bool targetCaptureNow = PoweredTargetCapture && Telemetry.PredictionReady &&
+                                    poweredCaptureAllowed &&
                                     Telemetry.TargetError > captureDeadband &&
                                      Telemetry.TimeToImpact > 0 &&
                                      Telemetry.TimeToImpact <= targetCaptureTime + LandingBurnLead &&
@@ -374,7 +386,7 @@ namespace MuMech
                 return;
             }
 
-            if (landingBurnNow || targetCaptureNow)
+            if (poweredCaptureAllowed && (landingBurnNow || targetCaptureNow))
             {
                 SetPhase(AdvancedLandingPhase.LandingBurn);
                 return;
@@ -393,10 +405,19 @@ namespace MuMech
                 return;
             }
 
+            // In atmospheric-capture mode, establish the deliberately long ballistic arc
+            // first. The 5 km overshoot is then removed by aerodynamic and powered guidance
+            // after entry instead of turning the vehicle sideways in orbit.
+            if (AtmosphericCaptureOnly && ShouldCoastToAtmosphere())
+            {
+                SetPhase(AdvancedLandingPhase.EntryCoast);
+                return;
+            }
+
             // Do not trap an out-of-fuel stage in Boostback with a permanent zero-throttle
             // command. If the atmospheric trajectory is already established, the next useful
             // action is to coast/warp to entry and use the remaining aerodynamic authority.
-            if (AdvancedLandingMath.ShouldStartBoostback(
+            if (poweredCaptureAllowed && AdvancedLandingMath.ShouldStartBoostback(
                     Telemetry.PredictionReady, Telemetry.TargetError, TargetRadius,
                     Telemetry.TimeToImpact, IgnoreFuelLimits, Telemetry.FuelMarginDeltaV))
             {
@@ -465,6 +486,18 @@ namespace MuMech
                     Core.Target.targetLatitude, Core.Target.targetLongitude, 0) - MainBody.position;
                 Quaternion rotation = Quaternion.AngleAxis((float)rotationDegrees, MainBody.angularVelocity);
                 Vector3d targetAtImpact = rotation * targetNow;
+                double aimOvershoot = AtmosphericCaptureOnly && MainBody.atmosphere
+                    ? Max(0, EntryOvershootDistance)
+                    : 0;
+                double aimAngle = AdvancedLandingMath.SurfaceOffsetAngleDegrees(
+                    aimOvershoot, MainBody.Radius);
+                if (aimAngle > 0)
+                {
+                    Vector3d orbitNormal = Orbit.OrbitNormal().normalized;
+                    targetAtImpact = Quaternion.AngleAxis((float)aimAngle, orbitNormal) * targetAtImpact;
+                }
+
+                Vector3d aimNow = Quaternion.Inverse(rotation) * targetAtImpact;
                 Vector3d horizontalToTarget = Vector3d.Exclude(
                     VesselState.Up, MainBody.position + targetAtImpact - VesselState.CoM).normalized;
                 Vector3d horizontalVelocity = Vector3d.Exclude(VesselState.Up, VesselState.OrbitalVelocity);
@@ -483,7 +516,10 @@ namespace MuMech
                     FreefallTime = freefallTime,
                     TargetAheadAngle = Vector3d.Angle(currentRadial, targetAtImpact),
                     PlaneChangeAngle = Vector3d.Angle(horizontalVelocity, horizontalToTarget),
-                    TargetAngleToOrbitNormal = targetToNormal
+                    TargetAngleToOrbitNormal = targetToNormal,
+                    AimOvershoot = aimOvershoot,
+                    AimLatitude = MainBody.GetLatitude(MainBody.position + aimNow),
+                    AimLongitude = MuUtils.ClampDegrees180(MainBody.GetLongitude(MainBody.position + aimNow))
                 };
                 return IsFinite(solution.DeltaV.magnitude);
             }
@@ -964,6 +1000,9 @@ namespace MuMech
                 Telemetry.DeorbitDeltaV = _deorbitBurnCommitted
                     ? deorbitSolution.DeltaV.magnitude
                     : deorbitSolution.BaseDeorbitDeltaV;
+                Telemetry.DeorbitAimOvershoot = deorbitSolution.AimOvershoot;
+                Telemetry.DeorbitAimLatitude = deorbitSolution.AimLatitude;
+                Telemetry.DeorbitAimLongitude = deorbitSolution.AimLongitude;
                 Telemetry.RequiredDeltaV = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(
                     Telemetry.DeorbitDeltaV, VesselState.GravityForce.magnitude,
                     VesselState.MaxEngineResponseTime, SafetyFactor());
@@ -1311,6 +1350,7 @@ namespace MuMech
                   $"aLat={Telemetry.CommandedLateralAcceleration:F2}m/s2 aVert={Telemetry.CommandedVerticalAcceleration:F2}m/s2 " +
                   $"throttle={Telemetry.CommandedThrottle:P0} q={Telemetry.DynamicPressure:F0}Pa " +
                   $"dv={Telemetry.AvailableDeltaV:F1}/{Telemetry.RequiredDeltaV:F1}m/s deorbit={Telemetry.DeorbitDeltaV:F1}m/s " +
+                  $"aimPast={Telemetry.DeorbitAimOvershoot:F0}m " +
                   $"orbitReachable={Telemetry.OrbitalReachable} autoWarp={Telemetry.AutoWarpActive} " +
                   $"warp={Telemetry.WarpMode}/{Telemetry.WarpRate:F1}x " +
                   $"entryIn={Telemetry.AtmosphereEntryCountdown:F1}s real={Telemetry.AtmosphereEntryRealSeconds:F1}s " +
@@ -1321,11 +1361,17 @@ namespace MuMech
 
         private void DrawDebugOverlay()
         {
-            if (!DebugOverlay || !HighLogic.LoadedSceneIsFlight || !MapView.MapIsEnabled || !Vessel.isActiveVessel ||
-                !Telemetry.PredictionReady) return;
+            if (!DebugOverlay || !HighLogic.LoadedSceneIsFlight || !MapView.MapIsEnabled || !Vessel.isActiveVessel) return;
 
-            Color color = Telemetry.Feasible ? Color.green : Color.yellow;
-            GLUtils.DrawGroundMarker(MainBody, Telemetry.PredictedLatitude, Telemetry.PredictedLongitude, color, true);
+            if (Telemetry.PredictionReady)
+            {
+                Color color = Telemetry.Feasible ? Color.green : Color.yellow;
+                GLUtils.DrawGroundMarker(MainBody, Telemetry.PredictedLatitude, Telemetry.PredictedLongitude, color, true);
+            }
+
+            if (IsFinite(Telemetry.DeorbitAimLatitude) && IsFinite(Telemetry.DeorbitAimLongitude))
+                GLUtils.DrawGroundMarker(MainBody, Telemetry.DeorbitAimLatitude,
+                    Telemetry.DeorbitAimLongitude, new Color(1.0f, 0.45f, 0.0f), true, 0, 80);
             GLUtils.DrawGroundMarker(MainBody, Core.Target.targetLatitude, Core.Target.targetLongitude, Color.cyan, true, (float)TargetRadius);
         }
     }

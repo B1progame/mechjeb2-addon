@@ -70,6 +70,9 @@ namespace MuMech.AdvancedLanding
         public double AtmosphereEntryRealSeconds = double.NaN;
         public double LandingBurnCountdown = double.NaN;
         public double DeorbitDeltaV;
+        public double DeorbitAimOvershoot;
+        public double DeorbitAimLatitude = double.NaN;
+        public double DeorbitAimLongitude = double.NaN;
         public double TimeToImpact = double.NaN;
         public double HeatRatio;
         public double GLoad;
@@ -112,6 +115,9 @@ namespace MuMech.AdvancedLanding
             AtmosphereEntryRealSeconds = double.NaN;
             LandingBurnCountdown = double.NaN;
             DeorbitDeltaV = 0;
+            DeorbitAimOvershoot = 0;
+            DeorbitAimLatitude = double.NaN;
+            DeorbitAimLongitude = double.NaN;
             TimeToImpact = double.NaN;
             HeatRatio = 0;
             GLoad = 0;

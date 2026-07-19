@@ -181,6 +181,28 @@ namespace MechJebLibTest.ControlTests
         }
 
         [Fact]
+        public void FiveKilometerOvershootProducesExpectedKerbinSurfaceAngle()
+        {
+            double angle = AdvancedLandingMath.SurfaceOffsetAngleDegrees(5000, 600000);
+
+            Assert.InRange(angle, 0.4774, 0.4775);
+            Assert.Equal(0, AdvancedLandingMath.SurfaceOffsetAngleDegrees(0, 600000), 8);
+        }
+
+        [Fact]
+        public void AtmosphericCaptureDefersPoweredDivertUntilEntry()
+        {
+            Assert.False(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                true, true, 70000, 70000));
+            Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                true, true, 69999, 70000));
+            Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                false, true, 100000, 70000));
+            Assert.True(AdvancedLandingMath.AtmosphericPoweredCaptureAllowed(
+                true, false, 100000, 0));
+        }
+
+        [Fact]
         public void OrbitalReserveDoesNotChargeFullOrbitalVelocity()
         {
             double required = AdvancedLandingMath.ProvisionalOrbitalLandingDeltaV(120, 9.81, 1, 1.18);

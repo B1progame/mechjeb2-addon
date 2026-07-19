@@ -182,6 +182,18 @@ namespace MechJebLib.Control
                    (ignoreFuelLimits || fuelMarginDeltaV > 0);
         }
 
+        public static double SurfaceOffsetAngleDegrees(double surfaceDistance, double bodyRadius)
+        {
+            if (surfaceDistance <= 0 || bodyRadius <= 0) return 0;
+            return Min(180, surfaceDistance / bodyRadius * 180 / PI);
+        }
+
+        public static bool AtmosphericPoweredCaptureAllowed(bool atmosphericCaptureOnly, bool bodyHasAtmosphere,
+            double altitudeAsl, double atmosphereTop)
+        {
+            return !atmosphericCaptureOnly || !bodyHasAtmosphere || altitudeAsl < atmosphereTop;
+        }
+
         public static double LandingProbability(double availableDeltaV, double requiredDeltaV, double twr, double targetError,
             double targetRadius, double heatRatio, double gLoad, double maxG, bool engineRelightAvailable, bool predictionReady)
         {
